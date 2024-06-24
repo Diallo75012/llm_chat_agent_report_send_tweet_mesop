@@ -1,0 +1,14 @@
+### MESOP, docs: https://google.github.io/mesop/components/box/  && https://google.github.io/mesop/demo/
+
+# under the hood mesop is using angular component and python as base code language
+
+# UI icones can be created from here 
+https://fonts.google.com/icons
+
+# watchdog script to restart server doesn't work yet so nee to fix it, don't want to use much space to insatll basel(prod) or ibazel(local)
+
+# kill process on port 32123
+sudo kill -9 `sudo lsof -t -i:32123`
+
+# mesop progress bar loading components
+different modes: Literal['determinate', 'indeterminate', 'buffer', 'query']
