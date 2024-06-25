@@ -12,3 +12,94 @@ sudo kill -9 `sudo lsof -t -i:32123`
 
 # mesop progress bar loading components
 different modes: Literal['determinate', 'indeterminate', 'buffer', 'query']
+
+# tweeter api response when posting tweet
+Details of the Returned Response
+Here's a high-level summary of the key attributes you can expect in the returned Status object:
+- id: The unique identifier for the tweet.
+- id_str: The string representation of the tweet ID.
+- text: The text content of the tweet.
+- created_at: The timestamp when the tweet was created.
+- user: An object containing information about the user who posted the tweet, including attributes like id, name, screen_name, location, description, and followers_count.
+- entities: A dictionary containing details about media, hashtags, mentions, URLs, and other entities within the tweet.
+- source: The source from which the tweet was posted (e.g., "Twitter Web App").
+- in_reply_to_status_id: The ID of the tweet to which this tweet is a reply, if applicable.
+- in_reply_to_user_id: The ID of the user to whom this tweet is a reply, if applicable.
+- in_reply_to_screen_name: The screen name of the user to whom this tweet is a reply, if applicable.
+- geo: Information about the geographical location associated with the tweet, if available.
+- coordinates: The geographical coordinates associated with the tweet, if available.
+- place: Information about the place associated with the tweet, if available.
+- retweet_count: The number of times this tweet has been retweeted.
+- favorite_count: The number of times this tweet has been liked.
+- lang: The language of the tweet.
+# eg. response:
+"""
+{
+  "id": 1234567890123456789,
+  "id_str": "1234567890123456789",
+  "text": "This is a sample tweet",
+  "created_at": "Wed Oct 10 20:19:24 +0000 2018",
+  "user": {
+    "id": 9876543210,
+    "id_str": "9876543210",
+    "name": "Sample User",
+    "screen_name": "sampleuser",
+    "location": "Sample Location",
+    "description": "This is a sample description.",
+    "followers_count": 100
+  },
+  "entities": {
+    "hashtags": [],
+    "symbols": [],
+    "user_mentions": [],
+    "urls": []
+  },
+  "source": "Twitter Web App",
+  "in_reply_to_status_id": null,
+  "in_reply_to_user_id": null,
+  "in_reply_to_screen_name": null,
+  "geo": null,
+  "coordinates": null,
+  "place": null,
+  "retweet_count": 0,
+  "favorite_count": 0,
+  "lang": "en"
+}
+"""
+# get the walues in your code:
+response = api.update_status(tweet_message)
+print(f"Tweet ID: {response.id}")
+print(f"Tweet text: {response.text}")
+print(f"Created at: {response.created_at}")
+print(f"Posted by: {response.user.screen_name}")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
