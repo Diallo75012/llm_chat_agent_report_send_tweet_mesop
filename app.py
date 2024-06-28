@@ -7,7 +7,7 @@ import time
 import base64
 import pdfplumber
 import markdownify
-from dotenv import load_dotenv
+from dotenv import load_dotenv, set_key
 # Pydantic stype function  argument type specifications
 from typing import List, Dict, Union, Optional, Callable
 # tweeter library
@@ -22,16 +22,17 @@ from langchain_groq import ChatGroq
 from langchain_openai import ChatOpenAI
 from langchain_community.llms import Ollama
 from openai import OpenAI
-#### FOR AGENT TEAM
-# LANFCHAIN TOOLS
-from langchain.pydantic_v1 import BaseModel, Field
-from langchain.tools import StructuredTool
-from langchain_community.tools import DuckDuckGoSearchRun
-# CREWAI AGENTS
-from crewai import Agent
-from crewai import Task
-from crewai import Crew, Process
-# from crewai_tools import FileReadTool, DirectoryReadTool
+# have another thread for the kickoff function output to be displayed in the webui
+import threading
+import time
+# asynchronous process to get stdout from agents and display to frontend
+import sys
+import asyncio
+from io import StringIO
+# import agents module
+import agents
+import subprocess
+
 
 # env vars
 load_dotenv(dotenv_path='.env', override=False)
@@ -101,16 +102,25 @@ class PageState:
 class TweetState:
   tweet_chat_message = ""
   tweet_message: str = ""
-  tweet_posted = Dict[str, str]
+  tweet_posted: Dict[str, str]
+
+@me.stateclass
+class Agentstate:
+  agent_messages: List[str]
+  tweet_agents: bool = False
+  report_agents: bool = False
+  
 
 @me.stateclass
 class PopupState:
   popup_visible: bool = False
   popup_message: str = ""
   popup_style: Dict[str, str]
+  popup_agent_visible: bool = False
+  agent_work_done: bool = False  # Add this to track completion
 
 # INPUT EVENT MANAGEMENT VARS
-env_dict = {
+tweet_auth_env_dict = {
     "CONSUMER_KEY": "",
     "CONSUMER_SECRET": "",
     "ACCESS_TOKEN": "",
@@ -129,265 +139,27 @@ result = {
 # Env Vars to set
 path = "./docs/World_Largest_Floods_paper.pdf"
 SIDENAV_WIDTH = 350
+tweet_state = ""
+chat_response_message = ""
+topic = ""
+env_file=".dynamic.env"
 
-######################## AGENTS ################################
-### AGENTS INPUTS
-input_tweet_agents={
-  "topic": "Create an SEO optimized tweet under 210 characters, with emojis and hashtags.",
-  "chat_response_message": f"{me.state(TweetState).tweet_chat_message}",
-  "tweet_state": f"{me.state(TweetState)}",
-  "TWEET_FILE": os.getnev("TWEET_FILE"),
-}
-
-input_report_agents={
-  "topic": f"{me.state(TweetState).tweet_chat_message}"
-}
-
-### AGENTS HELPTER FUNCTIONS
-# llm chat call function
-@observe(as_type="generation")
-def create_tweet_from_last_message(state, message, topic) -> str:
-  """
-    This function will call an llm to create the best tweet ever. It will also save the tweet in a file.
-    
-    Parameters:
-    message str: ''
-    topic str: 'description of how is the desired tweet by user'
-    
-    Returns:
-    Str representing the final tweet that will posted on Tweeter.
-  """
-   
-  try:
-    ### DIFFERENT TYPES OF LLM CALLS
-    # call llm to create tweet
-    # tweet_from_llm = lmstudio_llm.chat.completions.create OR USE LMSTUDIO
-        # model="TheBloke/OpenHermes-2.5-Mistral-7B-GGUF/openhermes-2.5-mistral-7b.Q3_K_M.gguf",
-    # tweet_from_llm = openai_llm.chat.completions.create(  OR USE OPENAI
-        # model="gpt-3.5-turbo-1106", # OPENAI
-    tweet_from_llm = groq_client.chat.completions.create( # OR USE GROQ
-      model=os.getenv("MODEL_MIXTRAL_7B"), # OR os.getenv("MODEL_LLAMA3_70B") FOR GROQ
-
-      messages=[
-        {
-          "role": "system",
-          "content": f"""
-            You are an expert in creating emotional, interesting and engaging social media posts. You always wrap your answer that can be posted by the user in markdown '```python' '```' tag.
-          """
-        },
-        {
-          "role": "user",
-          "content": f"Please can you {topic} from this message: {message}",
-        }
-      ],
-      temperature=float(os.getenv("GROQ_TEMPERATURE")), # 0.1 # GROQ and OPENAI and LMSTUDIO
-      max_tokens=int(os.getenv("GROQ_MAX_TOKEN")), # 1024  # GROQ and OPENAI
-      top_p=1, # GROQ and OPENAI
-      stop=None, # GROQ and OPENAI
-      stream=False, # GROQ and OPENAI AND LMSTUDIO
-    )
-    print("Tweet Form LLM: ", tweet_for_llm.choices[0].message.content)
-    tweet_from_llm_final_answer = tweet_from_llm.choices[0].message.content.split("```")[1].strip("python").strip()
-    langfuse_context.update_current_observation(
-      input=f"'topic': {topic}, 'message': {message}",
-      model=os.getenv("MODEL_MIXTRAL_7B"),
-      metadata={"function": "create_tweet_from_last_message", "purpose": "Here LLM will create an SEO optimized tweet."}
-    )
-    
-    # save tweet to file if needed for report generation which will check if this file exist and use it to make internet search and fact check
-    with open(os.getenv("TWEET_FILE"), "w", encoding='utf-8') as tweet_file:
-      tweet_file.write(tweet_from_llm_final_answer)
-      print("Tweet written to file asn saved!")
-    
-    # update state with final tweet to be posted
-    state.tweet_message = tweet_from_llm_final_answer
-    print(f"Tweet created and saved to the state, state.tweet_message: {tweet_from_llm_final_answer}")
-    return "{'Success': 'Thw final tweet to be posted has been created, please keep '}"
-
-  except Exception as e:
-    return f"Error while getting tweet from llm generation: {e}"  
-
-########### AGENTS TOOLS
-
-# internet search tool
-internet_search_tool = DuckDuckGoSearchRun()
-
-# create tweet tool
-def TweetVars(BaseModel):
-      state: str = Field(default=tweet_state, description="holding all variables maintained to persist in the tweet state to be used to get persistent variabled values.")
-      message: str = Field(default=chat_response_message, description="This is the latest message answer from the chat that will be used to create our tweet post.")
-      topic: str = Field(default=topic, description="This is user desired outcome and how the tweet should be formatted")
-
-@observe()
-def create_tweet_tool(state: str = state, message: str = chat_response_message, topic: str = topic) -> str:
-  """
-    This tool will get information about the product added to the {os.environ.get('store')} store. 
-    
-    Parameter: 
-    state str : 'holding all variables maintained to persist in the tweet state to be used to get persistent variabled values.' = {tweet_state}
-    message str: 'This is the latest message answer from the chat that will be used to create our tweet post.' = {chat_response_message}
-    topic str : 'This is user desired outcome and how the tweet should be formatted' = {topic}
-    
-    Returns: 
-    Str with information about the latest product details of the latest product created.
-  """
-  try:
-    tweet = create_tweet_from_last_message(state, message, topic)
-    return tweet
-  except Exception as e:
-    return '{"error": f"Error while creating tweet from llms create_tweet_tool: {e}"}'
-
-create_tweet_tool = StructuredTool.from_function(
-  func=create_tweet_tool,
-  name="create tweet tool",
-  description=  """
-    This tool will create the best tweet ever.
-  """,
-  args_schema=TweetVars,
-  # return_direct=True, # returns tool output only if no TollException raised
-  # coroutine= ... <- you can specify an async method if desired as well
-  # callback==callback_function # will run after task is completed
-
-# check tweet tool
-def CheckLenghtFile(BaseModel):
-      tweet_file: str = Field(default=TWEET_FILE, description="The file where the scheduled to be posted tweet exists.")
-
-def tweet_check_tool(tweet_file: str) -> int:
-  """
-    This tool will check the length of the tweet generated and return its length. If the length is more than 210 characters, a new tweet need to be created to respect that requirement. 
-    
-    Parameter: 
-    tweet_file str : 'The file where the scheduled to be posted tweet exists.' = {TWEET_FILE}
-    
-    Returns: 
-    int The length of the tweet 
-  """
-  
-  with open(tweet_file, "r", , encoding='utf-8') as scheduled_tweet_post:
-    scheduled_post = scheduled_tweet_post.read()
-    return len(scheduled_post)
-
-tweet_check_tool = StructuredTool.from_function(
-  func=create_tweet_tool,
-  name="tweet check tool",
-  description=  """
-    This tool will check the length of the scheduled tweet post.
-  """,
-  args_schema=CheckLenghtFile,
-  # return_direct=True, # returns tool output only if no TollException raised
-  # coroutine= ... <- you can specify an async method if desired as well
-  # callback==callback_function # will run after task is completed
-    
-### AGENTS DEFINITION
-
-tweet_creator = Agent(
-  role="Create tweets",
-  goal=f"Create an amazing SEO optimized tweet using ONLY available tools. topic is {topic}.",
-  verbose=True,
-  memory=False,
-  backstory="""You are an expert known to be using tools to create the best tweets of the web.""",
-  tools=[create_tweet_tool],
-  allow_delegation=True,
-  llm=groq_llm_mixtral_7b,
-  max_rpm=3,
-  max_iter=4,
-)
-
-tweet_checker = Agent(
-  role="Check tweets",
-  goal=f"Check that the number of characters of the tweet is not exceeding 210 characters othersiwe create one similar that is less than 210 characters long. topic is {topic}.",
-  verbose=True,
-  memory=False,
-  backstory="""You are an expert known to be using tools to check that tweets don't exceed a certain number of characters and create the best tweets of the web if you notice that the number of charatcter is exceeded. You always make tweets under 210 characters.""",
-  tools=[tweet_check_tool],
-  allow_delegation=True,
-  llm=groq_llm_mixtral_7b,
-  max_rpm=3,
-  max_iter=4,
-)
-
-fact_checker = Agent(
-  role="fact checker",
-  goal=f"Fact check online about: '{chat_response_message}'.",
-  verbose=True,
-  memory=False,
-  backstory="""You are an expert known to be using tools to create the best tweets of the web.""",
-  tools=[internet_search_tool],
-  allow_delegation=True,
-  llm=groq_llm_mixtral_7b,
-  max_rpm=3,
-  max_iter=4,
-)
-
-report_outline_creator = Agent(
-  role="report outline creator",
-  goal=f"Get your collegue fact checker view on the topic: {topic}. Then create mardown formatted very detailed report outline on the topic '{topic}' so that your collegue will be able to create a quality report tackling different aspects of the topic.",
-  verbose=True,
-  memory=False,
-  backstory="""You are an expert in generating markdowm formatted report outlines on different topics after having asked for a fact check online from your collegues.""",
-  tools=[internet_search_tool],
-  allow_delegation=True,
-  llm=groq_llm_mixtral_7b,
-  max_rpm=3,
-  max_iter=4,
-)
-
-report_creator = Agent(
-  role="Create detailed reports",
-  goal=f"Get report outline from collegue and create detailed mardown formatted report investigating and answering to potential questions about this topic: {report_topic}.",
-  verbose=True,
-  memory=False,
-  backstory="""You are an expert in generating very detailed markdown formatted reports from outline. Your writing style is emotional and persuasive. People reading your reports always get a very pertinent view and answer from their initial topics that they wouldn't have thought of before.""",
-  allow_delegation=True,
-  llm=groq_llm_mixtral_7b,
-  max_rpm=3,
-  max_iter=4,
-)
-
-### AGENTS TASKS DEFINITION
-tweet_creation_task = Task(
-  description=f"""First, execute tool available which will create the tweet. Do NOT try to be clever by creating variables or trying to figure out something, just execute the tool. Then, wait for the tool output message from the tool.""",
-  expected_output=f"Put only the tweet generated by the tool file using the mardown format.",
-  tools=[create_tweet_tool],
-  agent=tweet_creator,
-  async_execution=False,
-  output_file="./tweets/agent_tweet_creation_report.md"
-
-tweet_check_task = Task(
-  description=f"""First, execute tool available. Do NOT try to be clever by creating variables or trying to figure out something, just execute the tool. Then, wait for the tool output message from the tool. If the tool message return a number under 210 then consider that your job is done. if the tool message returns a number higher than 210 then you need to create a new tweet about the topic: '{topic}'. Make sure that if you are forced to create a new tweet, that one should only 210 characters long or under.""",
-  expected_output=f"if the tool returned number what equal or under 210 then you can consider your job done, just output the tweet generated by your collegue as last output. If the tool returned a number above 210, then you will need to create a new tweet under 210 characters and save it in a markdown format.",
-  tools=[tweet_check_tool],
-  agent=tweet_checker,
-  async_execution=False,
-  output_file="./tweets/agent_tweet_length_adjusted.md"
-
-fact_check_task = Task(
-  description=f"""First, execute tool available to fact check the information provided by this topic: {topic}. Do NOT try to be clever by creating variables or trying to figure out something, just execute the tool. Find also links online for the sources of your fact checking to have solid ground for user to be able to read more about those. Inform your collegue report outline creator about your finding so that he can adjust his work accordingly.""",
-  expected_output=f"Use markdown format to create a report about your findings during the inter search fact checking task.",
-  tools=[internet_search_tool],
-  agent=tweet_checker,
-  async_execution=False,
-  output_file="./reports/agent_fact_check_report.md"
-
-report_outline_creation_task = Task(
-  description=f"""Get information from your colleague fact checker and create a very detailed outline to create a report on the topic: {topic}. This task main goals is to create a markdown formatted report outline and the topic: 'topic'""",
-  expected_output=f"A markdown format very detailed report outline.",
-  tools=[internet_search_tool],
-  agent=tweet_checker,
-  async_execution=False,
-  output_file="./reports/agent_outline_of_report.md"
-
-report_outline_creation_task = Task(
-  description=f"""Get information from your colleague fact checker and create a very detailed outline to create a report on the topic: {topic}. This task main goals is to create a markdown formatted report outline and the topic: 'topic'""",
-  expected_output=f"A markdown format very detailed report outline.",
-  tools=[internet_search_tool],
-  agent=tweet_checker,
-  async_execution=False,
-  output_file="./reports/agent_outline_of_report.md"
 
 ############################################################
 ##### BUSINESS LOGIC HELPER FUNCTIONS
+# Manage agents state as they are working in order to show their though in a popup
+@observe(as_type="observation")
+def show_agent_popup(state):
+    state.popup_agent_visible = True
+@observe(as_type="observation")
+def close_agent_popup(state, e: me.ClickEvent):
+    state.popup_agent_visible = False
+@observe(as_type="observation")
+def add_agent_message(state, message): # we keep this function if we need to use it
+    state.agent_messages.append(message)
+
 # Function to show popup message
+@observe()
 def show_popup(state, message, message_type):
   styles = {
     "error": {"color": "red"},
@@ -399,28 +171,84 @@ def show_popup(state, message, message_type):
   state.popup_visible = True
   print(f"Popup State Updated: {state}")
 
+@observe()
 def close_popup(state, e: me.ClickEvent):
   state.popup_visible = False
   state.popup_message = ""
   state.popup_style = {}
   print(f"Pop up closed: All state fields reset -> {state}")
 
+def update_popup():
+  agent_state = me.state(AgentState)
+  popup_state = me.state(PopupState)
+  agent_output = ""
+  while os.getenv("AGENT_WORK_DONE") == "False":
+    load_dotenv(env_file, override=True)
+    new_output = os.getenv("AGENT_MESSAGES")
+    if new_output != agent_output:
+      agent_output = new_output
+      agent_state.agent_messages = agent_output
+      time.sleep(2)
+    agent_done = os.getenv("AGENT_WORK_DONE")
+  popup_state.agent_work_done = True
+
+def start_agents():
+  # Activate the virtual environment and run the agents script
+  while os.getenv("AGENT_WORK_DONE") == "False":
+    command = "source agents_venv/bin/activate && python3 agents.py"
+    agent_process = subprocess.Popen(command, shell=True, executable='/bin/bash')
+    # agent_process = subprocess.Popen(["source", "agents_venv/bin/activate", "&","python3", "agents.py"])
+    agent_process.wait()  # Wait for the agent process to complete
+    update_popup()
+  if os.getenv("AGENT_WORK_DONE") == "True":
+    agent_process.terminate()
+
 # post tweet
 # Function to post a tweet using saved tokens
 # add here llm agent call to work on the tweet
+@observe()
 def post_tweet(e: me.ClickEvent):
+    # get the needed states
     tweet_state = me.state(TweetState)
     popup_state = me.state(PopupState)
+    agent_state = me.state(AgentState)
+    ## Set env vars for agent input
+    agent_input_vars_dynamic = {
+      "CHAT_RESPONSE_MESSAGE": tweet_state.tweet_chat_message,
+      "TWEET_STATE": tweet_state
+    }
+    create_dynamic_env(".dynamic.env", agent_input_vars_dynamic)
+    
+    # flag here for the agents that it is the tweet agents that are going to work and not the report ones. we need to use shared env vars.
+    set_key(env_file, "TWEET_AGENTS", "True")
+    print(f"Check if TWEET_AGENTS env var updated to 'True': {os.getenv('TWEET_AGENTS')}")
+    
+    # start tweet agent workers. They will update the state tweet_message which is the final tweet posted catched later on, on this function
+    try:
+      print("Inside post_tweet agent job will start")
+      # start agent work
+      start_agents()
+    except Exception as e:
+      return {"error": f"Tweet Worker Agents had an issue: {e}"}
+    
+    # tweeter authentication
     auth = tweepy.OAuth1UserHandler(
-        os.getenv("CONSUMER_KEY"),
-        os.getenv("CONSUMER_SECRET"),
-        os.getenv("ACCESS_TOKEN"),
-        os.getenv("ACCESS_TOKEN_SECRET")
+        # No tweet will be sent for the moment we need to make sure that agent process works fine 
+        # and that outputs in popup in frontend that works fine as well before trying to post any tweet
+        "",
+        "",
+        "",
+        ""
+        #os.getenv("CONSUMER_KEY"),
+        #os.getenv("CONSUMER_SECRET"),
+        #os.getenv("ACCESS_TOKEN"),
+        #os.getenv("ACCESS_TOKEN_SECRET")
     )
     api = tweepy.API(auth)
     try:
-      # here have the agent team kickoff function started
-      response = api.update_status(tweet_state.tweet_message) # here change the message with the llm agent response and pass the state message to the llms
+      # here have the agent team kickoff that have already done their job and saved the tweet to be posted to the state variable tweet_message
+      tweet_message = os.getenv("TWEET_MESSAGE")
+      response = api.update_status(tweet_message) # here change the message with the llm agent response and pass the state message to the llms
       print("Tweet posted and tokens cleared.")
       tweet_state.tweet_posted = {
         "tweet": response.text,
@@ -432,6 +260,7 @@ def post_tweet(e: me.ClickEvent):
       clear_tokens()
       # show the popup message
       show_popup(popup_state, tweet_state.tweet_posted, message_type)
+      agent_state.tweet_agents = False
 
     except Exception as e:
       tweet_state.tweet_posted = {
@@ -440,10 +269,11 @@ def post_tweet(e: me.ClickEvent):
       message_type = "error"
       # show the popup message
       print("in post tweet exception error part")
-      print("tweet final message posted: ", tweet_state.tweet_message)
+      print("tweet final message posted: ", tweet_state.tweet_posted["tweet"])
       show_popup(popup_state, tweet_state.tweet_posted, message_type)
 
 # Function to clear environment variables
+@observe(as_type="observation")
 def clear_tokens():
     os.environ["CONSUMER_KEY"] = ""
     os.environ["CONSUMER_SECRET"] = ""
@@ -452,6 +282,7 @@ def clear_tokens():
     print("Tokens env. vars cleared!")
 
 # function to create dynamic env vars
+@observe(as_type="observation")
 def create_dynamic_env(env_path: str, env_vars: Dict[str, str]):
     """
     Create or update the dynamic environment file.
@@ -460,20 +291,21 @@ def create_dynamic_env(env_path: str, env_vars: Dict[str, str]):
         env_path (str): The path to the dynamic environment file.
         env_vars (dict): A dictionary containing environment variables.
     """
-    with open(env_path, 'w') as env_file:
-        for key, value in env_vars.items():
-            env_file.write(f"{key}={value}\n")
+    for key, value in env_vars.items():
+      set_key(env_path, key, value)
     load_dotenv(dotenv_path='.dynamic.env', override=True)
     print("Dynamic Env vars created and accessible using: os.getenv('variable_name')")
 
 
 # CLICK EVENT MANAGEMENT
+@observe()
 def on_click(e: me.ClickEvent):
   s = me.state(PageState)
   # side navigation 
   s.sidenav_open = not s.sidenav_open
 
 # update state form bool values to 'True'
+@observe()
 def update_form_state(env_dict):
   state = me.state(FormState)
   print("Are all value filled in dict? : ", all(env_dict.values()))
@@ -496,25 +328,19 @@ def update_form_state(env_dict):
     # warn user that all fields are required
     return False, "All Fields Required!"
 
-# can use those functions instead of 'lambda' anduse those in input field 'on_input'
-#def on_input_consumer_key(e):
-#    env_dict["CONSUMER_KEY"] = e.value
-#def on_input_consumer_secret(e):
-#    env_dict["CONSUMER_SECRET"] = e.value
-#def on_input_access_token(e):
-#    env_dict["ACCESS_TOKEN"] = e.value
-#def on_input_access_token_secret(e):
-#    env_dict["ACCESS_TOKEN_SECRET"] = e.value
 
+@observe()
 def on_input(state, key, e: me.InputEvent):
-  env_dict[key] = e.value
+  tweet_auth_env_dict[key] = e.value
  
 # Function to handle new messages
+@observe()
 def handle_message(msg):
   state.messages.append({"text": msg, "is_user": True})
 
 
 # Function to handle form submission
+@observe()
 def submit_form(e: me.ClickEvent):
   state = me.state(FormState)
   form_state = me.state(FormState)
@@ -522,12 +348,12 @@ def submit_form(e: me.ClickEvent):
   print("Submit form states: ", state)
    
   # update state form boolean values to 'True'
-  state_update_status, state_update_message = update_form_state(env_dict)
+  state_update_status, state_update_message = update_form_state(tweet_auth_env_dict)
   result["state_update_status"] = state_update_status
   result["state_update_message"] = state_update_message
     
   # check that all values are filled from dictionary and states have been updated to 'True'
-  if state_update_status and all(env_dict.values()):
+  if state_update_status and all(tweet_auth_env_dict.values()):
     print("State Updated Status to 'True' and All Env in Dict!")
       
     # check if field has been modified to inform user that previous value will be replaced
@@ -542,13 +368,13 @@ def submit_form(e: me.ClickEvent):
     print(f"Last Modified Updated to {state.last_modified}")
 
     # TRANSFER TOKENS TO ENV VAR FILE
-    # create env vars file
-    create_dynamic_env(".dynamic.env", env_dict) # make sure to delete file or content of file at the end of user session
-    # clear env var dictionary
-    for k, v in env_dict.items():
-      env_dict[k] = ""
+    # create env vars file: this will create and save env vars to dynamic.env file
+    create_dynamic_env(".dynamic.env", tweet_auth_env_dict) # make sure to delete file or content of file at the end of user session
+    # clear env var dictionary, this will get rid of the values secret that were stored in the dict tweet_auth_env_dict
+    for k, v in tweet_auth_env_dict.items():
+      tweet_auth_env_dict[k] = ""
 
-    print("Env dict emptied down: ", env_dict)
+    print("Env dict emptied down: ", tweet_auth_env_dict)
     print(os.system("cat .dynamic.env"))
 
     # tell user to press the post to tweeter button
@@ -564,8 +390,8 @@ def submit_form(e: me.ClickEvent):
   print("State Result: ", form_state.result)
 
 
-
-
+# UPLOADER PAGE
+@observe()
 @me.page(security_policy=me.SecurityPolicy(allowed_iframe_parents=["https://google.github.io"]),path="/uploader",)
 def app():
   pdf_path = path
@@ -591,11 +417,13 @@ def app():
       else:
         me.image(src=file_state.contents)
 
+@observe(as_type="observation")
 def pdf_to_markdown(file_path):
     with pdfplumber.open(file_path) as pdf:
         text = ''.join([page.extract_text() for page in pdf.pages])
     return markdownify.markdownify(text, heading_style="ATX")
 
+@observe(as_type="observation")
 def handle_upload(event: me.UploadEvent):
   file_state = me.state(FileState)
   file_state.name = event.file.name
@@ -611,13 +439,14 @@ def handle_upload(event: me.UploadEvent):
 
 
 ### CHAT
-
+@observe()
 @me.page(security_policy=me.SecurityPolicy(allowed_iframe_parents=["https://google.github.io"]), path="/chat", title="Mesop Demo Chat",)
 def page():
   page_state = me.state(PageState)
   form_state = me.state(FormState)
   tweet_state = me.state(TweetState)
   popup_state = me.state(PopupState)
+  agent_state = me.state(AgentState)
   #with me.box(style=me.Style(margin=me.Margin.all(10),display="flex", flex_direction="row", justify_content="center", width="100vw", align_items="center",)):
   with me.box(style=me.Style(display="flex", flex_direction="row", width="100%")):
  
@@ -642,7 +471,6 @@ def page():
         me.input(type="password", value="", on_input=lambda e: on_input(form_state, "ACCESS_TOKEN", e), required=True),
         me.text("Enter auth secret"),
         me.input(type="password", value="", on_input=lambda e: on_input(form_state, "ACCESS_TOKEN_SECRET", e), required=True),
-        print("Env dict: ", env_dict)
       
       # Save secrets        
       with me.box(style=me.Style(display="flex", white_space="nowrap", text_overflow="ellipsis", flex_direction="column", justify_content="start", align_content="center", align_items="center")):
@@ -676,11 +504,21 @@ def page():
     if popup_state.popup_visible:
       with me.box(style=me.Style(position="fixed", top="50%", left="50%", transform="translate(-50%, -50%)", padding=me.Padding.all(20), background="white", box_shadow="0 0 10px rgba(0,0,0,0.5)", z_index=1000)):
         me.text(str(popup_state.popup_message), style=popup_state.popup_style)
-        # me.button("Close", on_click=close_popup)
         me.button("Close", on_click=lambda e: close_popup(popup_state, e))
 
+    # Agent job output popup
+    # while os.getenv("POPUP_AGENT_VISIBLE") == "True":
+    if popup_state.popup_agent_visible:
+      with me.box(style=me.Style(position="fixed", bottom="10%", right="10%", padding=me.Padding.all(20), background="white", box_shadow="0 0 10px rgba(0,0,0,0.5)", z_index=1000, max_height="900px", overflow_y="scroll")):
+        me.text("Agent Output", type="headline-6")
+        #for message in json_loads(os.getenv("AGENT_MESSAGES")):
+        for message in agent_state.agent_messages:
+          me.text(message)
+        #if os.getenv("AGENT_WORK_DONE") == "True":
+        if popup_state.agent_work_done:  # Show button only when done
+          me.button("Close", on_click=lambda e: close_agent_popup(popup_state, e))
 
-
+@observe(as_type="observation")
 def transform(input: str, history: list[mel.ChatMessage]):
   tweet_state = me.state(TweetState)
   # add here the llm agents- call function logic for chat
@@ -700,4 +538,4 @@ LINES = [
 ]
 
 
-
+)

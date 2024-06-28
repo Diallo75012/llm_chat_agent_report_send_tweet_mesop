@@ -73,12 +73,24 @@ print(f"Tweet text: {response.text}")
 print(f"Created at: {response.created_at}")
 print(f"Posted by: {response.user.screen_name}")
 
+### issues with creai pydantic version and mesop pydantic version 
+will have to create two virtualenv, one for pydantic and the other for crewai agents
+will use env vars dynamic file to set values as states of mesop can't be used because of this issue.
+will have to set those variables and the logic, code is a bit messy because of that need to refactor code.
 
+So will create a subprocess that will start the agent process and stop it. And use env vars to notify that agents job is done and to have the agent stdout appended to env vars so that the mesop app can read periodically that env var and display it in a popup. When the agent job is done, env var is updated from the agent side before the process stops, the mesop app will then after the process is done update state or fetch that env var to display the button to user to close the popup
 
+eg. of how we will handle state sharing between both mesop and crewai using env vars:
+- os.environ["VARIABLE_NAME"] = "VARIABLE_VALUE"
+- os.getenv("VARIABLE_NAME") # to get the value
+- with open("./dynamic.env", "w", type="utf-8") as dynamic_env_file:
+    dynamic_env_file.write('AGENT_DONE="True"\n')
 
-
-
-
+eg. starting the subprocess from mesop app to start agent team and have control to stop it when it is done:
+import subprocess
+agent_process = subprocess.Popen(['python', 'agent_manager.py'])
+if agent_done == 'True':
+  agent_process.terminate()
 
 
 
