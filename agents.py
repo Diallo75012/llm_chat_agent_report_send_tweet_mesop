@@ -3,8 +3,6 @@ import json
 from dotenv import load_dotenv, set_key
 # Pydantic stype function  argument type specifications
 from typing import List, Dict, Union, Optional, Callable
-# tweeter library
-import tweepy
 # Langfuse
 from langfuse import Langfuse
 from langfuse.decorators import observe, langfuse_context
@@ -26,7 +24,7 @@ from crewai import Task
 from crewai import Crew, Process
 # from crewai_tools import FileReadTool, DirectoryReadTool
 # for cqpture stdout
-from io import StringIO
+#from io import StringIO
 
 # env vars
 load_dotenv(dotenv_path='.env', override=False)
@@ -85,15 +83,15 @@ langfuse_handler = CallbackHandler(
 )
 
 ### AGENTS HELPTER FUNCTIONS
-
+"""
 # extend the message by adding more message to the env var in order to capture all agent messages and display in frontend popup
 def append_to_agent_messages(env_path: str, new_messages: List[str]):
     """
-    Append new messages to the AGENT_MESSAGES environment variable in the specified .env file.
+    #Append new messages to the AGENT_MESSAGES environment variable in the specified .env file.
 
-    Args:
-        env_path (str): The path to the .env file.
-        new_messages (list): The new messages to append.
+    #Args:
+        #env_path (str): The path to the .env file.
+        #new_messages (list): The new messages to append.
     """
     # Load the current environment variables from the file
     load_dotenv(env_path, override=True)
@@ -139,11 +137,12 @@ class StreamCapturer(StringIO):
 @observe(as_type="observation")
 def capture_output(process_func):
     """
-    Capture the output of the process_func (kickoff function for agents) and update the environment variables accordingly.
+    #Capture the output of the process_func (kickoff function for agents) and update the environment variables accordingly.
 
-    Args:
-        process_func (Callable): The function to execute and capture output from.
+    #Args:
+        #process_func (Callable): The function to execute and capture output from.
     """
+    print("Inside cpature output of agent job")
     # Capturing stdout to be able to display it
     capturer = StreamCapturer(sys.stdout)
     sys.stdout = capturer
@@ -160,6 +159,7 @@ def capture_output(process_func):
         process_func()
 
         while os.getenv("AGENT_WORK_DONE") == "False":
+            print("Inside while loop of capture_output that updates env var for mesop popup")
             time.sleep(2)
             output = read_output()
             if output:
@@ -187,7 +187,7 @@ def kickoff_agents(kickoff):
   # as this app stops after agent work we can flush langfuse to make sure all traces are sent to the backend
   langfuse.flush()
   return {"status": os.getenv("AGENT_WORK_DONE")}
-
+"""
 
 # llm chat call function
 @observe(as_type="generation")
@@ -460,7 +460,9 @@ report_agent_team = Crew(
 @observe()
 def agent_team_job():
   load_dotenv('.dynamic.env', override=True)
+  print("Inside agent team job")
   if os.getenv("TWEET_AGENTS") == "True":
+    print("Inside agent team job Tweet Agents")
     tweet_workers = tweet_agent_team.kickoff(inputs=input_tweet_agents)
     return tweet_workers
   if os.getenv("REPORT_AGENTS") == "True":
@@ -472,14 +474,18 @@ if __name__ == '__main__':
   load_dotenv('.dynamic.env', override=True)
   # make sure that env var agent work done is set to False
   set_key(env_file, "AGENT_WORK_DONE", "False")
-
   # make the popup visible by changing the env var that mesop in the other side is monitoring for changes
   set_key(env_file, "POPUP_AGENT_VISIBLE", "True")
+  load_dotenv('.dynamic.env', override=True)
   
   # agent team starts working
   # we use here agent_team_job and not agent_team_job() as we pass in the object function that will be then executed as process_func() adding the '()' to have the function executed
-  kickoff_agents(agent_team_job)
+  #kickoff_agents(agent_team_job)
+  agent_team_job()
   
+  # Indicate agent work is done
+  set_key('.dynamic.env', "AGENT_WORK_DONE", "True")
+  load_dotenv('.dynamic.env', override=True)
   # this is handled in the mesop app part
   # set_key(env_file, "AGENT_WORK_DONE", "False")
   # set_key(env_file, "POPUP_AGENT_VISIBLE", "True")
