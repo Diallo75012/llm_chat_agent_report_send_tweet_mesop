@@ -1,4 +1,5 @@
 import os
+import json
 from dotenv import load_dotenv, set_key
 # Pydantic stype function  argument type specifications
 from typing import List, Dict, Union, Optional, Callable
@@ -24,6 +25,8 @@ from crewai import Agent
 from crewai import Task
 from crewai import Crew, Process
 # from crewai_tools import FileReadTool, DirectoryReadTool
+# for cqpture stdout
+from io import StringIO
 
 # env vars
 load_dotenv(dotenv_path='.env', override=False)
@@ -43,6 +46,10 @@ input_report_agents={
 }
 
 env_file = ".dynamic.env"
+
+chat_response_message = ""
+topic = ""
+TWEET_FILE = ""
 
 #### LLMS VARS
 # OLLAMA LLM
@@ -78,6 +85,7 @@ langfuse_handler = CallbackHandler(
 )
 
 ### AGENTS HELPTER FUNCTIONS
+
 # extend the message by adding more message to the env var in order to capture all agent messages and display in frontend popup
 def append_to_agent_messages(env_path: str, new_messages: List[str]):
     """
@@ -110,14 +118,6 @@ def append_to_agent_messages(env_path: str, new_messages: List[str]):
     # Update the environment variable in the .env file
     set_key(env_path, 'AGENT_MESSAGES', updated_messages)
     print("AGENT_MESSAGES updated successfully.")
-
-# Manage agents state as they are working in order to show their though in a popup
-@observe(as_type="observation")
-def show_agent_popup():
-    os.environ["POPUP_AGENT_VISIBLE"] = "True"
-@observe(as_type="observation")
-def close_agent_popup():
-    os.environ["POPUP_AGENT_VISIBLE"] = "False"
 
 # capture stdout of agent and update states as they output messages
 @observe(as_type="observation")
@@ -159,13 +159,17 @@ def capture_output(process_func):
         # Run the process_func (which should be the kickoff function)
         process_func()
 
-        while True:
+        while os.getenv("AGENT_WORK_DONE") == "False":
             time.sleep(2)
             output = read_output()
             if output:
                 append_to_agent_messages('.dynamic.env', [output])
                 capturer.seek(0)
                 capturer.truncate(0)
+            # Check if the agent work is done
+            load_dotenv('.dynamic.env', override=True)
+            if os.getenv("AGENT_WORK_DONE") == "True":
+                break
 
     finally:
         close_capturer()
@@ -173,6 +177,7 @@ def capture_output(process_func):
 # use the kickoff function here to launch agents
 @observe(as_type="observation")
 def kickoff_agents(kickoff):
+  load_dotenv('.dynamic.env', override=True)
   set_key('.dynamic.env', "POPUP_AGENT_VISIBLE", "True")
   print("Inside Agents Module -> kickoff_agent: State shared env var updated for popup to show, capture_output of agent will start")
   capture_output(kickoff)
@@ -454,6 +459,7 @@ report_agent_team = Crew(
 
 @observe()
 def agent_team_job():
+  load_dotenv('.dynamic.env', override=True)
   if os.getenv("TWEET_AGENTS") == "True":
     tweet_workers = tweet_agent_team.kickoff(inputs=input_tweet_agents)
     return tweet_workers
@@ -463,13 +469,20 @@ def agent_team_job():
 
 # change this to update the env var and start the agent team with the right inputs
 if __name__ == '__main__':
+  load_dotenv('.dynamic.env', override=True)
+  # make sure that env var agent work done is set to False
   set_key(env_file, "AGENT_WORK_DONE", "False")
 
   # make the popup visible by changing the env var that mesop in the other side is monitoring for changes
-  set_key(env_file, "POPUP_AGENT_VISIBLE")
+  set_key(env_file, "POPUP_AGENT_VISIBLE", "True")
   
   # agent team starts working
-  kickoff_agents(agent_team_job())
+  # we use here agent_team_job and not agent_team_job() as we pass in the object function that will be then executed as process_func() adding the '()' to have the function executed
+  kickoff_agents(agent_team_job)
+  
+  # this is handled in the mesop app part
+  # set_key(env_file, "AGENT_WORK_DONE", "False")
+  # set_key(env_file, "POPUP_AGENT_VISIBLE", "True")
   
 
 

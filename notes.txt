@@ -92,6 +92,10 @@ agent_process = subprocess.Popen(['python', 'agent_manager.py'])
 if agent_done == 'True':
   agent_process.terminate()
 
+# need to initialize some states and env vars, and, at then end also restore their initial values
+Why? because user might want to chat again and post some other tweet for example or create some new reports
+therefore, we need to re-initialize state in order to have the code logic work properly and not consider that agent have done their work for example when in the iterative process we need this set to False and only True at then end of the iteration so that the code logic can continue cycling out.
+# need toc reate the models in langfuse and also add decorator and callback function to have nice traces. check if we can set the "sessions" as well as for the moment we have been only using, "observation", "generation" and normal types.
 
 
 

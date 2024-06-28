@@ -1,4 +1,5 @@
 import os
+import json
 from datetime import datetime
 import mesop as me
 import mesop.labs as mel
@@ -30,7 +31,6 @@ import sys
 import asyncio
 from io import StringIO
 # import agents module
-import agents
 import subprocess
 
 
@@ -105,7 +105,7 @@ class TweetState:
   tweet_posted: Dict[str, str]
 
 @me.stateclass
-class Agentstate:
+class AgentState:
   agent_messages: List[str]
   tweet_agents: bool = False
   report_agents: bool = False
@@ -148,13 +148,19 @@ env_file=".dynamic.env"
 ############################################################
 ##### BUSINESS LOGIC HELPER FUNCTIONS
 # Manage agents state as they are working in order to show their though in a popup
-@observe(as_type="observation")
+@observe()
 def show_agent_popup(state):
     state.popup_agent_visible = True
-@observe(as_type="observation")
+    # set the popup_agent_visible shared state env varsto true
+    set_key(".dynamic.env", "POPUP_AGENT_VISIBLE", "True")
+    load_dotenv('.dynamic.env', override=True)
+@observe()
 def close_agent_popup(state, e: me.ClickEvent):
     state.popup_agent_visible = False
-@observe(as_type="observation")
+    # reset the agent_work_done shared state env vars
+    set_key(".dynamic.env", "AGENT_WORK_DONE", "False")
+    load_dotenv('.dynamic.env', override=True)
+@observe()
 def add_agent_message(state, message): # we keep this function if we need to use it
     state.agent_messages.append(message)
 
@@ -178,28 +184,33 @@ def close_popup(state, e: me.ClickEvent):
   state.popup_style = {}
   print(f"Pop up closed: All state fields reset -> {state}")
 
-def update_popup():
-  agent_state = me.state(AgentState)
-  popup_state = me.state(PopupState)
-  agent_output = ""
-  while os.getenv("AGENT_WORK_DONE") == "False":
-    load_dotenv(env_file, override=True)
-    new_output = os.getenv("AGENT_MESSAGES")
-    if new_output != agent_output:
-      agent_output = new_output
-      agent_state.agent_messages = agent_output
-      time.sleep(2)
-    agent_done = os.getenv("AGENT_WORK_DONE")
-  popup_state.agent_work_done = True
+#def update_popup(): # see if this function can be used instead with env. vars in the agents.py 'try' of 'capture_output'
+#  agent_state = me.state(AgentState)
+#  popup_state = me.state(PopupState)
+#  agent_output = ""
+#  while os.getenv("AGENT_WORK_DONE") == "False":
+#    load_dotenv(env_file, override=True)
+#    new_output = os.getenv("AGENT_MESSAGES")
+#    if new_output != agent_output:
+#      agent_output = new_output
+#      agent_state.agent_messages = agent_output
+#      time.sleep(2)
+#    agent_done = os.getenv("AGENT_WORK_DONE")
+#  popup_state.agent_work_done = True
 
 def start_agents():
+  # initialize agent_work_done to False
+  # set_key(".dynamic.env", "AGENT_WORK_DONE", "False")
   # Activate the virtual environment and run the agents script
   while os.getenv("AGENT_WORK_DONE") == "False":
+    load_dotenv('.dynamic.env', override=True)
     command = "source agents_venv/bin/activate && python3 agents.py"
     agent_process = subprocess.Popen(command, shell=True, executable='/bin/bash')
     # agent_process = subprocess.Popen(["source", "agents_venv/bin/activate", "&","python3", "agents.py"])
     agent_process.wait()  # Wait for the agent process to complete
-    update_popup()
+    # we don't need the update function because it is managed by the shared env vars and the while loop in mesop on the agent popup display section
+    # update_popup()
+  load_dotenv('.dynamic.env', override=True)
   if os.getenv("AGENT_WORK_DONE") == "True":
     agent_process.terminate()
 
@@ -213,19 +224,24 @@ def post_tweet(e: me.ClickEvent):
     popup_state = me.state(PopupState)
     agent_state = me.state(AgentState)
     ## Set env vars for agent input
+    print("Tweet State Raw: ", tweet_state, type(tweet_state))
+    tweet_state_json_str = json.dumps(tweet_state.__dict__)
+    print("Tweet State Json: ", tweet_state_json_str, type(tweet_state_json_str))
     agent_input_vars_dynamic = {
       "CHAT_RESPONSE_MESSAGE": tweet_state.tweet_chat_message,
-      "TWEET_STATE": tweet_state
+      "TWEET_STATE": tweet_state_json_str
     }
     create_dynamic_env(".dynamic.env", agent_input_vars_dynamic)
     
     # flag here for the agents that it is the tweet agents that are going to work and not the report ones. we need to use shared env vars.
     set_key(env_file, "TWEET_AGENTS", "True")
+    load_dotenv('.dynamic.env', override=True)
     print(f"Check if TWEET_AGENTS env var updated to 'True': {os.getenv('TWEET_AGENTS')}")
     
     # start tweet agent workers. They will update the state tweet_message which is the final tweet posted catched later on, on this function
     try:
       print("Inside post_tweet agent job will start")
+      show_agent_popup(agent_state)
       # start agent work
       start_agents()
     except Exception as e:
@@ -255,9 +271,10 @@ def post_tweet(e: me.ClickEvent):
         "create_at": response.created_at,
         "user_name": response.user.name,
       }
+      print("Tweet State: ", tweet_state)
       message_type = "validated"
       # delete env vars
-      clear_tokens()
+      # clear_tokens() # we don't use this for the moment as we want to keep the keys in the env vars for testing purpose
       # show the popup message
       show_popup(popup_state, tweet_state.tweet_posted, message_type)
       agent_state.tweet_agents = False
@@ -279,6 +296,8 @@ def clear_tokens():
     os.environ["CONSUMER_SECRET"] = ""
     os.environ["ACCESS_TOKEN"] = ""
     os.environ["ACCESS_TOKEN_SECRET"] = ""
+    load_dotenv('.dynamic.env', override=True)
+    
     print("Tokens env. vars cleared!")
 
 # function to create dynamic env vars
@@ -291,8 +310,10 @@ def create_dynamic_env(env_path: str, env_vars: Dict[str, str]):
         env_path (str): The path to the dynamic environment file.
         env_vars (dict): A dictionary containing environment variables.
     """
+    # will save env vars env_path=".dynamic.env"
     for key, value in env_vars.items():
-      set_key(env_path, key, value)
+      print(f"\n{key}-{value}\n")
+      set_key(env_path, key, str(value))
     load_dotenv(dotenv_path='.dynamic.env', override=True)
     print("Dynamic Env vars created and accessible using: os.getenv('variable_name')")
 
@@ -507,16 +528,19 @@ def page():
         me.button("Close", on_click=lambda e: close_popup(popup_state, e))
 
     # Agent job output popup
-    # while os.getenv("POPUP_AGENT_VISIBLE") == "True":
-    if popup_state.popup_agent_visible:
-      with me.box(style=me.Style(position="fixed", bottom="10%", right="10%", padding=me.Padding.all(20), background="white", box_shadow="0 0 10px rgba(0,0,0,0.5)", z_index=1000, max_height="900px", overflow_y="scroll")):
-        me.text("Agent Output", type="headline-6")
-        #for message in json_loads(os.getenv("AGENT_MESSAGES")):
-        for message in agent_state.agent_messages:
-          me.text(message)
-        #if os.getenv("AGENT_WORK_DONE") == "True":
-        if popup_state.agent_work_done:  # Show button only when done
+    while os.getenv("POPUP_AGENT_VISIBLE") == "True":
+    #if popup_state.popup_agent_visible:
+      with me.box(style=me.Style(position="fixed", bottom="10%", right="10%", padding=me.Padding.all(20), background="white", box_shadow="0 0 10px rgba(0,0,0,0.5)", z_index=1000, height="900px", overflow_y="scroll")):
+        me.text("Agents Output", type="headline-6")
+        if os.getenv("AGENT_MESSAGES"):
+          load_dotenv(dotenv_path='.dynamic.env', override=True)
+          for message in json.loads(os.getenv("AGENT_MESSAGES")):
+          #for message in agent_state.agent_messages:
+            me.text(message)
+        if os.getenv("AGENT_WORK_DONE") == "True":
+        #if popup_state.agent_work_done:  # Show button only when done
           me.button("Close", on_click=lambda e: close_agent_popup(popup_state, e))
+        time.sleep(1)
 
 @observe(as_type="observation")
 def transform(input: str, history: list[mel.ChatMessage]):
@@ -538,4 +562,4 @@ LINES = [
 ]
 
 
-)
+
