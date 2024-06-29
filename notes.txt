@@ -98,6 +98,78 @@ therefore, we need to re-initialize state in order to have the code logic work p
 # need toc reate the models in langfuse and also add decorator and callback function to have nice traces. check if we can set the "sessions" as well as for the moment we have been only using, "observation", "generation" and normal types.
 
 
+### LANGFUSE
+# use session for traces to have those regroupped under one session ID, source: https://langfuse.com/docs/tracing-features/sessions
+from langfuse.decorators import langfuse_context, observe
+@observe()
+def fn():
+    langfuse_context.update_current_trace(
+        session_id="your-session-id",  # session
+        tags=["tag-1", "tag-2"],       # tags
+        metadata={"key":"value"},      # metadata
+        user_id="user-id",             # user_id
+    )
+     
+fn()
+
+# from langfuse.decorator library, see all the variabels that can be set using update_current_trace and update_current_observation functions:
+def update_current_trace(
+  self,
+  name: Optional[str] = None,
+  user_id: Optional[str] = None,
+  session_id: Optional[str] = None,
+  version: Optional[str] = None,
+  release: Optional[str] = None,
+  metadata: Optional[Any] = None,
+  tags: Optional[List[str]] = None,
+  public: Optional[bool] = None,
+
+def update_current_observation(
+  self,
+  *,
+  input: Optional[Any] = None,
+  output: Optional[Any] = None,
+  name: Optional[str] = None,
+  version: Optional[str] = None,
+  metadata: Optional[Any] = None,
+  start_time: Optional[datetime] = None,
+  end_time: Optional[datetime] = None,
+  release: Optional[str] = None,
+  tags: Optional[List[str]] = None,
+  user_id: Optional[str] = None,
+  session_id: Optional[str] = None,
+  level: Optional[SpanLevel] = None,
+  status_message: Optional[str] = None,
+  completion_start_time: Optional[datetime] = None,
+  model: Optional[str] = None,
+  model_parameters: Optional[Dict[str, MapValue]] = None,
+  usage: Optional[Union[BaseModel, ModelUsage]] = None,
+  prompt: Optional[PromptClient] = None,
+  public: Optional[bool] = None,
+
+# next to do:
+- get the agent popup showup when tweet button is pressed and no errors like pressing the button without submitting token/secrets for example
+- get the subprocess output displayed inside the popup
+- use langfuse to trace all functions and enhance the traces by adding max information using variables that are useful and can be passed in update_current_trace and update_current_observation
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

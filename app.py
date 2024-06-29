@@ -149,7 +149,8 @@ env_file=".dynamic.env"
 ############################################################
 ##### BUSINESS LOGIC HELPER FUNCTIONS
 @observe(as_type="observation")
-def update_agent_popup():
+def update_agent_popup(state1, state2, agent_message_env_var_str_list):
+  """
     if os.getenv("AGENT_WORK_DONE") == "True":
       popup_state.agent_work_done = True
     else:
@@ -159,16 +160,39 @@ def update_agent_popup():
         load_dotenv('.dynamic.env', override=True)
         popup_state = me.state(PopupState)
         agent_state = me.state(AgentState)
+  """
+  # Ensure it is correctly formatted JSON by fixing single quotes and removing trailing commas
+  print("Inside update_agent_popup")
+  agent_messages_str = agent_message_env_var_str_list
+  
+  if agent_messages_str:
+    try:
+      print("Inside update_agent_popup 'Try'")
+      # Correct the format: replace single quotes with double quotes
+      agent_messages_str = agent_messages_str.replace("'", "\"")
+      # Remove trailing commas
+      if agent_messages_str.endswith(","):
+        agent_messages_str = agent_messages_str[:-1]
+        # Parse the string as JSON
+      agent_messages_list = json.loads(agent_messages_str)
+      print("agent_message_list value and type (from function): ", agent_messages_list, type(agent_messages_list))
+      return agent_messages_list
 
-        if os.getenv("POPUP_AGENT_VISIBLE") == "True":
-          popup_state.popup_agent_visible = True
-          agent_messages = json.loads(os.getenv("AGENT_MESSAGES", "[]"))
-          agent_state.agent_messages = agent_messages
-          for message in agent_state.agent_messages:
-              me.text(message)
-        else:
-          popup_state.popup_agent_visible = False
-
+    except json.JSONDecodeError as e:
+      print(f"Error decoding JSON: {e}")
+  else:
+    print("AGENT_MESSAGES is not set or is empty.")
+  """ 
+  if os.getenv("POPUP_AGENT_VISIBLE") == "True":
+    state1.popup_agent_visible = True
+    agent_messages = json.loads(os.getenv("AGENT_MESSAGES", "[]"))
+    print("Agent Messages from update_agent_popup: ", agent_messages, type(agent_messages))
+    state2.agent_messages = agent_messages
+    for message in state2.agent_messages:
+      me.text(message)
+  else:
+    state1.popup_agent_visible = False
+  """
 
 # Manage agents state as they are working in order to show their though in a popup
 @observe()
@@ -177,6 +201,7 @@ def show_agent_popup(state):
     # set the popup_agent_visible shared state env varsto true
     set_key(".dynamic.env", "POPUP_AGENT_VISIBLE", "True")
     load_dotenv('.dynamic.env', override=True)
+    print("Inside show_agent_popup, state: ", state)
 @observe()
 def close_agent_popup(state, e: me.ClickEvent):
     state.popup_agent_visible = False
@@ -267,14 +292,9 @@ def capture_output(command):
     thread.join()
 
 def start_agents():
-  popup_state = me.state(PopupState)
-  agent_state = me.state(AgentState)
-  # initialize agent_work_done to False
-  set_key(".dynamic.env", "AGENT_WORK_DONE", "False")
-  set_key('.dynamic.env', "POPUP_AGENT_VISIBLE", "True")
-  load_dotenv('.dynamic.env', override=True)
-  popup_state.popup_agent_visible = True
-  agent_state.agent_work_done = False
+  print("Inside start_agents function: all states updated again even if already done in post tweet before, therefore, env vars and state updated: popup_agent_visible=True , agent_work_done=True")
+  
+  """
   # Activate the virtual environment and run the agents script
   command = ["bash", "-c", "source agents_venv/bin/activate && python3 agents.py"]
   capture_output(command)
@@ -283,6 +303,8 @@ def start_agents():
   agent_state.agent_work_done = True
   if os.getenv("AGENT_WORK_DONE") == "True":
     agent_process.terminate()
+  """
+
 
 # post tweet
 # Function to post a tweet using saved tokens
@@ -314,10 +336,13 @@ def post_tweet(e: me.ClickEvent):
       if tweet_state.tweet_chat_message:
         try:
           print("Inside post_tweet agent job will start")
-          show_agent_popup(agent_state)
+          show_agent_popup(popup_state)
           # start agent work
           set_key(".dynamic.env", "AGENT_WORK_DONE", "False")
-          start_agents()
+          load_dotenv('.dynamic.env', override=True)
+          agent_state.agent_work_done = False
+          print("Starting Tweet Agents: agent_work_done=false, popup_agent_visible=True")
+          #start_agents()
         except Exception as e:
           return {"error": f"Tweet Worker Agents had an issue: {e}"}
       else:
@@ -610,19 +635,22 @@ def page():
     # Agent job output popup
     # while os.getenv("POPUP_AGENT_VISIBLE") == "True":
     if popup_state.popup_agent_visible:
-      with me.box(style=me.Style(position="fixed", bottom="10%", right="10%", padding=me.Padding.all(20), background="white", box_shadow="0 0 10px rgba(0,0,0,0.5)", z_index=1000, height="900px", overflow_y="scroll")):
-        me.text("Agents Output", type="headline-6")
-        #for message in json.loads(os.getenv("AGENT_MESSAGES")):
-        #for message in agent_state.agent_messages:
-          #me.text(message)
-        
-        # Start the periodic update for agent popup
-        update_agent_popup()
-        
-        #if os.getenv("AGENT_MESSAGES"):
-          #load_dotenv(dotenv_path='.dynamic.env', override=True)
-          #for message in json.loads(os.getenv("AGENT_MESSAGES")):
-            #me.text(message)
+      with me.box(style=me.Style(position="fixed", bottom="10%", right="10%", padding=me.Padding.all(20), background="white", box_shadow="0 0 10px rgba(0,0,0,0.5)", z_index=1000, height="600px", overflow_y="scroll")):
+        with me.box(style=me.Style(padding=me.Padding.all(2),display="flex", flex_direction="column", background="white", justify_content="start", align_content="center", align_items="center", flex_wrap="wrap")):
+          me.text("Agents Output", type="headline-6")
+          agent_messages_list = update_agent_popup(popup_state, agent_state, os.getenv("AGENT_MESSAGES"))
+          print("agent_message_list value and type (from webui popup agent): ", agent_messages_list, type(agent_messages_list))
+          # Now you can loop through the list
+          for message in agent_messages_list:
+            print("message: ", message)
+            me.text(message)
+          time.sleep(2)
+
+          
+          #if os.getenv("AGENT_MESSAGES"):
+           # load_dotenv(dotenv_path='.dynamic.env', override=True)
+            #for message in json.loads(os.getenv("AGENT_MESSAGES")):
+             # me.text(message)
         #if os.getenv("AGENT_WORK_DONE") == "True":
         #if popup_state.agent_work_done:  # Show button only when done
           #me.button("Close", on_click=lambda e: close_agent_popup(popup_state, e))
