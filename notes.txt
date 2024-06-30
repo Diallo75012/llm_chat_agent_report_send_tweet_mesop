@@ -73,7 +73,7 @@ print(f"Tweet text: {response.text}")
 print(f"Created at: {response.created_at}")
 print(f"Posted by: {response.user.screen_name}")
 
-### issues with creai pydantic version and mesop pydantic version 
+### issues with creaw pydantic version and mesop pydantic version 
 will have to create two virtualenv, one for pydantic and the other for crewai agents
 will use env vars dynamic file to set values as states of mesop can't be used because of this issue.
 will have to set those variables and the logic, code is a bit messy because of that need to refactor code.
@@ -97,6 +97,28 @@ Why? because user might want to chat again and post some other tweet for example
 therefore, we need to re-initialize state in order to have the code logic work properly and not consider that agent have done their work for example when in the iterative process we need this set to False and only True at then end of the iteration so that the code logic can continue cycling out.
 # need toc reate the models in langfuse and also add decorator and callback function to have nice traces. check if we can set the "sessions" as well as for the moment we have been only using, "observation", "generation" and normal types.
 
+# issue with mesop context as it is using flask under the hood, RuntimeError: Working outside of application context:
+when running threads to read log files so that it runs independently, it interfers with the container created for the app.
+therefore we need to handle that:
+RuntimeError: Working outside of application context.
+from flask import current_app
+
+def read_log_file(log_file_path):
+    with current_app.app_context():
+        agent_state = me.state(AgentState)
+        time.sleep(2)
+        with open(log_file_path, "r", encoding="utf-8") as log_file:
+            while not stop_log_reader:
+                where = log_file.tell()
+                line = log_file.readline()
+                if not line:
+                    time.sleep(0.1)  # Sleep briefly to avoid busy waiting
+                    log_file.seek(where)  # Go back to the last read position
+                else:
+                    # Update the Mesop state with the new log line
+                    agent_state.agent_messages.append(line.strip())
+                    # Process the log line
+                    print(line.strip())
 
 ### LANGFUSE
 # use session for traces to have those regroupped under one session ID, source: https://langfuse.com/docs/tracing-features/sessions

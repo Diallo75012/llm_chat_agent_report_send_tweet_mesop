@@ -25,6 +25,8 @@ from crewai import Crew, Process
 # from crewai_tools import FileReadTool, DirectoryReadTool
 # for cqpture stdout
 #from io import StringIO
+import logging
+
 
 # env vars
 load_dotenv(dotenv_path='.env', override=False)
@@ -83,111 +85,22 @@ langfuse_handler = CallbackHandler(
 )
 
 ### AGENTS HELPTER FUNCTIONS
-"""
-# extend the message by adding more message to the env var in order to capture all agent messages and display in frontend popup
-def append_to_agent_messages(env_path: str, new_messages: List[str]):
-    """
-    #Append new messages to the AGENT_MESSAGES environment variable in the specified .env file.
 
-    #Args:
-        #env_path (str): The path to the .env file.
-        #new_messages (list): The new messages to append.
-    """
-    # Load the current environment variables from the file
-    load_dotenv(env_path, override=True)
-    
-    # Get the current value of AGENT_MESSAGES
-    current_messages = os.getenv('AGENT_MESSAGES', '[]')
-    
-    # Convert the current value to a list
-    try:
-        current_messages_list = json.loads(current_messages)
-        if not isinstance(current_messages_list, list):
-            raise ValueError("AGENT_MESSAGES is not a list.")
-    except json.JSONDecodeError:
-        current_messages_list = []
-    
-    # Append the new messages
-    current_messages_list.extend(new_messages)
-    
-    # Convert the updated list back to a JSON string
-    updated_messages = json.dumps(current_messages_list)
-    
-    # Update the environment variable in the .env file
-    set_key(env_path, 'AGENT_MESSAGES', updated_messages)
-    print("AGENT_MESSAGES updated successfully.")
+# Configure logging
+log_file_path = os.getenv("LOG_FILE")
+logging.basicConfig(filename=log_file_path, level=logging.INFO, format='%(asctime)s:%(message)s')
 
-# capture stdout of agent and update states as they output messages
-@observe(as_type="observation")
-class StreamCapturer(StringIO):
-    def __init__(self, original_stream):
-        super().__init__()
-        self.original_stream = original_stream
-
-    def write(self, s):
-        super().write(s)
-        self.original_stream.write(s)
-        self.original_stream.flush()
-
-    def flush(self):
-        super().flush()
-        self.original_stream.flush()
-
-# async function that will do the job of capturing the agent output and update states
-@observe(as_type="observation")
-def capture_output(process_func):
-    """
-    #Capture the output of the process_func (kickoff function for agents) and update the environment variables accordingly.
-
-    #Args:
-        #process_func (Callable): The function to execute and capture output from.
-    """
-    print("Inside cpature output of agent job")
-    # Capturing stdout to be able to display it
-    capturer = StreamCapturer(sys.stdout)
-    sys.stdout = capturer
-
-    def read_output():
-        return capturer.getvalue()
-
-    def close_capturer():
-        sys.stdout = capturer.original_stream
-        capturer.close()
-
-    try:
-        # Run the process_func (which should be the kickoff function)
-        process_func()
-
-        while os.getenv("AGENT_WORK_DONE") == "False":
-            print("Inside while loop of capture_output that updates env var for mesop popup")
-            time.sleep(2)
-            output = read_output()
-            if output:
-                append_to_agent_messages('.dynamic.env', [output])
-                capturer.seek(0)
-                capturer.truncate(0)
-            # Check if the agent work is done
-            load_dotenv('.dynamic.env', override=True)
-            if os.getenv("AGENT_WORK_DONE") == "True":
-                break
-
-    finally:
-        close_capturer()
-
-# use the kickoff function here to launch agents
-@observe(as_type="observation")
-def kickoff_agents(kickoff):
-  load_dotenv('.dynamic.env', override=True)
-  set_key('.dynamic.env', "POPUP_AGENT_VISIBLE", "True")
-  print("Inside Agents Module -> kickoff_agent: State shared env var updated for popup to show, capture_output of agent will start")
-  capture_output(kickoff)
-  set_key('.dynamic.env', "AGENT_WORK_DONE", "True") # Set to True when done
-  set_key('.dynamic.env', "POPUP_AGENT_VISIBLE", "False")
-  print("Closing agent app")
-  # as this app stops after agent work we can flush langfuse to make sure all traces are sent to the backend
-  langfuse.flush()
-  return {"status": os.getenv("AGENT_WORK_DONE")}
-"""
+# callback functions
+def agent_step_callback(Agent): #step, state
+    #message = f"Agent {Agent.role} at step {Step}: {State}"
+    message = str(Agent)
+    logging.info(message)
+def task_callback(Task): # Result
+    #message = f"Task {Task.description} completed with result: {Result}"
+    message = str(Task)
+    logging.info(message)
+def capture_output_callback(Agent, Message):
+    logging.info(f"Agent {Agent.role} output: {Message}")
 
 # llm chat call function
 @observe(as_type="generation")
@@ -217,7 +130,7 @@ def create_tweet_from_last_message(message, topic) -> str:
         {
           "role": "system",
           "content": f"""
-            You are an expert in creating emotional, interesting and engaging social media posts. You always wrap your answer that can be posted by the user in markdown '```python' '```' tag.
+            You are an expert in creating emotional, interesting and engaging social media posts. You always wrap your answer that can be posted by the user in markdown '```python' '```' tag. You always keep your answer short and concise to not exceed character count for social media post.
           """
         },
         {
@@ -231,7 +144,7 @@ def create_tweet_from_last_message(message, topic) -> str:
       stop=None, # GROQ and OPENAI
       stream=False, # GROQ and OPENAI AND LMSTUDIO
     )
-    print("Tweet Form LLM: ", tweet_for_llm.choices[0].message.content)
+    print("Tweet Form LLM: ", tweet_from_llm.choices[0].message.content)
     tweet_from_llm_final_answer = tweet_from_llm.choices[0].message.content.split("```")[1].strip("python").strip()
     langfuse_context.update_current_observation(
       input=f"'topic': {topic}, 'message': {message}",
@@ -245,10 +158,10 @@ def create_tweet_from_last_message(message, topic) -> str:
       print("Tweet written to file asn saved!")
     
     # update state with final tweet to be posted
-    set_key(".dynamic_env", "TWEET_MESSAGE", tweet_from_llm_final_answer)
+    set_key(".dynamic.env", "TWEET_MESSAGE", tweet_from_llm_final_answer)
 
     print(f"Tweet created and saved to the state shared env var, TWEET_MESSAGE: {tweet_from_llm_final_answer}")
-    return "{'Success': 'The final tweet to be posted has been created, please keep '}"
+    return f"Success: The final tweet to be posted has been created, please keep only the following in your final output: {tweet_from_llm_final_answer}"
 
   except Exception as e:
     return f"Error while getting tweet from llm generation: {e}"  
@@ -339,11 +252,13 @@ tweet_creator = Agent(
   llm=groq_llm_mixtral_7b,
   max_rpm=3,
   max_iter=4,
+  # callback=capture_output_callback,
+  step_callback=agent_step_callback,
 )
 
 tweet_checker = Agent(
   role="Check tweets",
-  goal=f"Check that the number of characters of the tweet is not exceeding 210 characters othersiwe create one similar that is less than 210 characters long. topic is {topic}.",
+  goal=f"Check that the number of characters of the tweet is not exceeding 210 characters otherwise create one similar that is less than 210 characters long. topic is '{topic}' and message to transform in tweet is '{chat_response_message}'.",
   verbose=True,
   memory=False,
   backstory="""You are an expert known to be using tools to check that tweets don't exceed a certain number of characters and create the best tweets of the web if you notice that the number of charatcter is exceeded. You always make tweets under 210 characters.""",
@@ -352,6 +267,8 @@ tweet_checker = Agent(
   llm=groq_llm_llama3_70b,
   max_rpm=3,
   max_iter=4,
+  # callback=capture_output_callback,
+  step_callback=agent_step_callback,
 )
 
 # REPORT AGENTS
@@ -366,6 +283,8 @@ fact_checker = Agent(
   llm=groq_llm_llama3_70b,
   max_rpm=3,
   max_iter=4,
+  # callback=capture_output_callback,
+  step_callback=agent_step_callback,
 )
 
 report_outline_creator = Agent(
@@ -379,11 +298,13 @@ report_outline_creator = Agent(
   llm=groq_llm_gemma_7b,
   max_rpm=3,
   max_iter=4,
+  # callback=capture_output_callback,
+  step_callback=agent_step_callback,
 )
 
 report_creator = Agent(
   role="Create detailed reports",
-  goal=f"Get report outline from collegue and create detailed mardown formatted report investigating and answering to potential questions about this topic: {report_topic}.",
+  goal=f"Get report outline from collegue and create detailed mardown formatted report investigating and answering to potential questions about this topic: {topic}.",
   verbose=True,
   memory=False,
   backstory="""You are an expert in generating very detailed markdown formatted reports from outline. Your writing style is emotional and persuasive. People reading your reports always get a very pertinent view and answer from their initial topics that they wouldn't have thought of before.""",
@@ -391,26 +312,30 @@ report_creator = Agent(
   llm=groq_llm_mixtral_7b,
   max_rpm=3,
   max_iter=4,
+  # callback=capture_output_callback,
+  step_callback=agent_step_callback,
 )
 
 ### AGENTS TASKS DEFINITION
 # TWEET TASK
 tweet_creation_task = Task(
   description=f"""First, execute tool available which will create the tweet. Do NOT try to be clever by creating variables or trying to figure out something, just execute the tool. Then, wait for the tool output message from the tool.""",
-  expected_output=f"Put only the tweet generated by the tool file using the mardown format.",
+  expected_output=f"Put only the tweet generated by the tool file using the mardown format. Your output should be wrapper in a markdown '```python' '```' .",
   tools=[create_tweet_tool],
   agent=tweet_creator,
   async_execution=False,
-  output_file="./tweets/agent_tweet_creation_report.md"
+  output_file="./tweets/agent_tweet_creation_report.md",
+  callback=task_callback,
 )
 
 tweet_check_task = Task(
   description=f"""First, execute tool available. Do NOT try to be clever by creating variables or trying to figure out something, just execute the tool. Then, wait for the tool output message from the tool. If the tool message return a number under 210 then consider that your job is done. if the tool message returns a number higher than 210 then you need to create a new tweet about the topic: '{topic}'. Make sure that if you are forced to create a new tweet, that one should only 210 characters long or under.""",
-  expected_output=f"if the tool returned number what equal or under 210 then you can consider your job done, just output the tweet generated by your collegue as last output. If the tool returned a number above 210, then you will need to create a new tweet under 210 characters and save it in a text format.",
+  expected_output=f"if the tool returned number what equal or under 210 then you can consider your job done, just output the tweet generated by your collegue as last output. If the tool returned a number above 210, then you will need to create a new tweet under 210 characters and save it in a text format. Your output should be wrapper in a markdown '```python' '```' .",
   tools=[tweet_check_tool],
   agent=tweet_checker,
   async_execution=False,
-  output_file="./tweets/agent_tweet_length_adjusted.txt"
+  output_file="./tweets/agent_tweet_length_adjusted.txt",
+  callback=task_callback,
 )
 
 # REPORT TASKS
@@ -420,7 +345,8 @@ fact_check_task = Task(
   tools=[internet_search_tool],
   agent=tweet_checker,
   async_execution=False,
-  output_file="./reports/agent_fact_check_report.md"
+  output_file="./reports/agent_fact_check_report.md",
+  callback=task_callback,
 )
 
 report_outline_creation_task = Task(
@@ -429,7 +355,8 @@ report_outline_creation_task = Task(
   tools=[internet_search_tool],
   agent=tweet_checker,
   async_execution=False,
-  output_file="./reports/agent_outline_of_report.md"
+  output_file="./reports/agent_outline_of_report.md",
+  callback=task_callback,
 )
 
 report_creation_task = Task(
@@ -438,7 +365,8 @@ report_creation_task = Task(
   tools=[internet_search_tool],
   agent=tweet_checker,
   async_execution=False,
-  output_file="./reports/agent_outline_of_report.md"
+  output_file="./reports/agent_outline_of_report.md",
+  callback=task_callback,
 )
 
 ##### AGENT TEAMS
@@ -448,6 +376,7 @@ tweet_agent_team = Crew(
   tasks=[tweet_creation_task, tweet_check_task],
   process=Process.sequential,
   verbose=2,
+    callback=capture_output_callback,
 )
 ## PROCESS SEQUENTIAL
 report_agent_team = Crew(
@@ -455,6 +384,7 @@ report_agent_team = Crew(
   tasks=[fact_check_task, report_outline_creation_task, report_creation_task],
   process=Process.sequential,
   verbose=2,
+  callback=capture_output_callback,
 )
 
 @observe()
@@ -472,18 +402,10 @@ def agent_team_job():
 # change this to update the env var and start the agent team with the right inputs
 if __name__ == '__main__':
   load_dotenv('.dynamic.env', override=True)
-  # make sure that env var agent work done is set to False
-  set_key(env_file, "AGENT_WORK_DONE", "False")
-  # make the popup visible by changing the env var that mesop in the other side is monitoring for changes
-  set_key(env_file, "POPUP_AGENT_VISIBLE", "True")
-  load_dotenv('.dynamic.env', override=True)
-  
-  # agent team starts working
-  # we use here agent_team_job and not agent_team_job() as we pass in the object function that will be then executed as process_func() adding the '()' to have the function executed
-  #kickoff_agents(agent_team_job)
+  print("Inside agents.py will start now agent_team_job()")
   agent_team_job()
   
-  # Indicate agent work is done
+  # Indicate agent work is done for the capture output to detect it and stop its while loop then mesop will continue the rest of the functions app
   set_key('.dynamic.env', "AGENT_WORK_DONE", "True")
   load_dotenv('.dynamic.env', override=True)
   # this is handled in the mesop app part

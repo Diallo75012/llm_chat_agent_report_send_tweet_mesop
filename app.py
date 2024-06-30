@@ -32,8 +32,15 @@ import asyncio
 from io import StringIO
 # import agents module
 import subprocess
+from subprocess import Popen
 import threading
+# logging
+import logging
+# this to avoid contet error
+from flask import current_app, Flask
 
+
+app = Flask(__name__)
 
 # env vars
 load_dotenv(dotenv_path='.env', override=False)
@@ -144,64 +151,63 @@ tweet_state = ""
 chat_response_message = ""
 topic = ""
 env_file=".dynamic.env"
+stop_log_reader = False
 
 
 ############################################################
 ##### BUSINESS LOGIC HELPER FUNCTIONS
-@observe(as_type="observation")
-def update_agent_popup(state1, state2, agent_message_env_var_str_list):
-  """
-    if os.getenv("AGENT_WORK_DONE") == "True":
-      popup_state.agent_work_done = True
-    else:
-      popup_state.agent_work_done = False
-      while True:
-        time.sleep(2)  # Check every 2 seconds
-        load_dotenv('.dynamic.env', override=True)
-        popup_state = me.state(PopupState)
-        agent_state = me.state(AgentState)
-  """
-  # Ensure it is correctly formatted JSON by fixing single quotes and removing trailing commas
-  print("Inside update_agent_popup")
-  agent_messages_str = agent_message_env_var_str_list
-  
-  if agent_messages_str:
-    try:
-      print("Inside update_agent_popup 'Try'")
-      # Correct the format: replace single quotes with double quotes
-      agent_messages_str = agent_messages_str.replace("'", "\"")
-      # Remove trailing commas
-      if agent_messages_str.endswith(","):
-        agent_messages_str = agent_messages_str[:-1]
-        # Parse the string as JSON
-      agent_messages_list = json.loads(agent_messages_str)
-      print("agent_message_list value and type (from function): ", agent_messages_list, type(agent_messages_list))
-      return agent_messages_list
+# Append new messages to the AGENT_MESSAGES environment variable in the specified .env file.
+@observe()
+def append_to_agent_messages(env_path: str, new_messages: List[str]):
+    """
+    Append new messages to the AGENT_MESSAGES environment variable in the specified .env file.
 
-    except json.JSONDecodeError as e:
-      print(f"Error decoding JSON: {e}")
-  else:
-    print("AGENT_MESSAGES is not set or is empty.")
-  """ 
-  if os.getenv("POPUP_AGENT_VISIBLE") == "True":
-    state1.popup_agent_visible = True
-    agent_messages = json.loads(os.getenv("AGENT_MESSAGES", "[]"))
-    print("Agent Messages from update_agent_popup: ", agent_messages, type(agent_messages))
-    state2.agent_messages = agent_messages
-    for message in state2.agent_messages:
-      me.text(message)
-  else:
-    state1.popup_agent_visible = False
-  """
+    Args:
+        env_path (str): The path to the .env file.
+        new_messages (list): The new messages to append.
+    """
+    # Load the current environment variables from the file
+    load_dotenv(env_path, override=True)
+    
+    # Get the current value of AGENT_MESSAGES
+    current_messages = os.getenv('AGENT_MESSAGES', '[]')
+    
+    # Convert the current value to a list
+    try:
+        current_messages_list = json.loads(current_messages)
+        if not isinstance(current_messages_list, list):
+            raise ValueError("AGENT_MESSAGES is not a list.")
+    except json.JSONDecodeError:
+        current_messages_list = []
+    
+    # Append the new messages
+    current_messages_list.extend(new_messages)
+    
+    # Convert the updated list back to a JSON string
+    updated_messages = json.dumps(current_messages_list)
+    
+    # Update the environment variable in the .env file
+    set_key(env_path, 'AGENT_MESSAGES', updated_messages)
+    print("AGENT_MESSAGES updated successfully.")
+    
+    # Refresh the Mesop state
+    popup_state = me.state(PopupState)
+    agent_state = me.state(AgentState)
+    agent_state.agent_messages = current_messages_list
+    popup_state.popup_agent_visible = True
+
+    print("Popup state updated successfully.")
 
 # Manage agents state as they are working in order to show their though in a popup
 @observe()
 def show_agent_popup(state):
-    state.popup_agent_visible = True
-    # set the popup_agent_visible shared state env varsto true
-    set_key(".dynamic.env", "POPUP_AGENT_VISIBLE", "True")
-    load_dotenv('.dynamic.env', override=True)
-    print("Inside show_agent_popup, state: ", state)
+  print("Inside show popup agent")
+  state.popup_agent_visible = True
+  # set the popup_agent_visible shared state env varsto true
+  set_key(".dynamic.env", "POPUP_AGENT_VISIBLE", "True")
+  load_dotenv('.dynamic.env', override=True)
+  print("Inside show_agent_popup, state: ", state, "popup agent visible state: ", state.popup_agent_visible, "env var popup_agent_visible: ", os.getenv("POPUP_AGENT_VISIBLE"))
+
 @observe()
 def close_agent_popup(state, e: me.ClickEvent):
     state.popup_agent_visible = False
@@ -209,6 +215,7 @@ def close_agent_popup(state, e: me.ClickEvent):
     set_key(".dynamic.env", "AGENT_WORK_DONE", "False")
     set_key(".dynamic.env", "POPUP_AGENT_VISIBLE", "False")
     load_dotenv('.dynamic.env', override=True)
+    print("Popup agents closed, state reinitialized to agent_work_done=False and popup_agent_visible=False")
 @observe()
 def add_agent_message(state, message): # we keep this function if we need to use it
     state.agent_messages.append(message)
@@ -233,89 +240,106 @@ def close_popup(state, e: me.ClickEvent):
   state.popup_style = {}
   print(f"Pop up closed: All state fields reset -> {state}")
 
-#def update_popup(): # see if this function can be used instead with env. vars in the agents.py 'try' of 'capture_output'
-#  agent_state = me.state(AgentState)
-#  popup_state = me.state(PopupState)
-#  agent_output = ""
-#  while os.getenv("AGENT_WORK_DONE") == "False":
-#    load_dotenv(env_file, override=True)
-#    new_output = os.getenv("AGENT_MESSAGES")
-#    if new_output != agent_output:
-#      agent_output = new_output
-#      agent_state.agent_messages = agent_output
-#      time.sleep(2)
-#    agent_done = os.getenv("AGENT_WORK_DONE")
-#  popup_state.agent_work_done = True
+#### BACKGROUND READ LOGS ######
+# start sub process to read log file written by agents and update AgentState agent_messages
+@observe()
+def read_log_file(app, log_file_path):
+  with app.app_context():
+    print("Inside read log file app context")
+    agent_state = me.state(AgentState)
+    time.sleep(2)
+    with open(log_file_path, "r", encoding="utf-8") as log_file:
+      while not stop_log_reader:
+        where = log_file.tell()
+        line = log_file.readline()
+        if not line:
+          time.sleep(0.1)  # Sleep briefly to avoid busy waiting
+          log_file.seek(where)  # Go back to the last read position
+        else:
+          # Update the Mesop state with the new log line
+          agent_state.agent_messages.append(line.strip())
+          # Process the log line
+          print(line.strip())
 
-class StreamCapturer(StringIO):
-    def __init__(self, original_stream):
-        super().__init__()
-        self.original_stream = original_stream
+@observe()
+def start_background_log_reader(app, log_file_path):
+  print("inside start background log reader")
+  global stop_log_reader
+  stop_log_reader = False
+  if log_file_path is None:
+    raise ValueError("LOG_FILE path is not set. Please check your environment variables.")
+  log_reader_thread = threading.Thread(target=read_log_file, args=(app, log_file_path))
+  log_reader_thread.start()
+  return log_reader_thread
 
-    def write(self, s):
-        super().write(s)
-        self.original_stream.write(s)
-        self.original_stream.flush()
+@observe()
+def stop_background_log_reader():
+  global stop_log_reader
+  stop_log_reader = True
 
-    def flush(self):
-        super().flush()
-        self.original_stream.flush()
+#### BACKGROUND RUN AGENTS ######
+@observe()
+def run_agent_process(command):
+  print("Inside run agent process")
+  full_command = f"bash -c '{command}'"
+  agent_process = Popen(full_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True, text=True)
+  print("Inside run agent process waiitng for agent_process")
+  stdout, stderr = agent_process.communicate()  # Capture the output
+  print(f"stdout: {stdout}")
+  print(f"stderr: {stderr}")
+  #agent_process.wait()
+  return agent_process
 
-def capture_output(command):
-    capturer = StreamCapturer(sys.stdout)
-    sys.stdout = capturer
+#### START BACKGROUND PROCESSES LOG READ AND AGENT JOB ######
+@observe()
+def start_agents(app):
+  with app.app_context():
+    print("Inside app context start_agent")
+    popup_state = me.state(PopupState)
+    agent_state = me.state(AgentState)
+    popup_state.popup_agent_visible = True
+    command = "source /home/creditizens/mesop/agents_venv/bin/activate && /home/creditizens/mesop/agents_venv/bin/python3 /home/creditizens/mesop/agents.py"
+        
+    # Start log reader thread
+    log_file = os.getenv("LOG_FILE")
+    log_thread = start_background_log_reader(app, log_file)
 
-    def read_output():
-        return capturer.getvalue()
+    # Start agent process in a separate thread
+    agent_thread = threading.Thread(target=run_agent_process, args=(command,))
+    print("Inside app context start_agent: agent_thread start line")
+    agent_thread.start()
 
-    process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    # Wait for the agent process to complete
+    agent_thread.join()
 
-    def update_output():
-        while process.poll() is None:
-            time.sleep(1)
-            output = read_output()
-            if output:
-                append_to_agent_messages('.dynamic.env', [output])
-                capturer.seek(0)
-                capturer.truncate(0)
-            load_dotenv('.dynamic.env', override=True)
-            if os.getenv("AGENT_WORK_DONE") == "True":
-                break
-
-        final_output = read_output()
-        if final_output:
-            append_to_agent_messages('.dynamic.env', [final_output])
-        sys.stdout = capturer.original_stream
-
-    thread = threading.Thread(target=update_output)
-    thread.start()
-    thread.join()
-
-def start_agents():
-  print("Inside start_agents function: all states updated again even if already done in post tweet before, therefore, env vars and state updated: popup_agent_visible=True , agent_work_done=True")
-  
-  """
-  # Activate the virtual environment and run the agents script
-  command = ["bash", "-c", "source agents_venv/bin/activate && python3 agents.py"]
-  capture_output(command)
-  set_key('.dynamic.env', "AGENT_WORK_DONE", "True")
-  load_dotenv('.dynamic.env', override=True)
-  agent_state.agent_work_done = True
-  if os.getenv("AGENT_WORK_DONE") == "True":
-    agent_process.terminate()
-  """
+    # Stop log reader thread
+    stop_background_log_reader()
+    log_thread.join()
+        
+    set_key('.dynamic.env', 'AGENT_WORK_DONE', 'True')
+    load_dotenv('.dynamic.env', override=True)
+    agent_state.agent_work_done = True
+    print("Inside start_agents function: all states updated again even if already done in post tweet before, therefore, env vars and state updated: popup_agent_visible=True , agent_work_done=True")
 
 
 # post tweet
 # Function to post a tweet using saved tokens
 # add here llm agent call to work on the tweet
 @observe()
-def post_tweet(e: me.ClickEvent):
+def post_tweet(e: me.ClickEvent, app=app):
+
     # get the needed states
     tweet_state = me.state(TweetState)
     popup_state = me.state(PopupState)
     agent_state = me.state(AgentState)
     from_state = me.state(FormState)
+    try:
+      show_agent_popup(popup_state)
+      popup_state.popup_agent_visible = True
+      print("*************************  ", popup_state.popup_agent_visible, "  ******************************")
+      time.sleep(4)
+    except Exception as e:
+      return f"An error occured while trying to show popup agent: {e}"
     ## Set env vars for agent input
     print("Tweet State Raw: ", tweet_state, type(tweet_state))
     tweet_state_json_str = json.dumps(tweet_state.__dict__)
@@ -334,19 +358,25 @@ def post_tweet(e: me.ClickEvent):
     # start tweet agent workers. They will update the state tweet_message which is the final tweet posted catched later on, on this function
     if from_state.consumer_key and from_state.consumer_secret and from_state.access_token and from_state.access_token_secret:
       if tweet_state.tweet_chat_message:
-        try:
-          print("Inside post_tweet agent job will start")
-          show_agent_popup(popup_state)
-          # start agent work
-          set_key(".dynamic.env", "AGENT_WORK_DONE", "False")
-          load_dotenv('.dynamic.env', override=True)
-          agent_state.agent_work_done = False
-          print("Starting Tweet Agents: agent_work_done=false, popup_agent_visible=True")
-          #start_agents()
-        except Exception as e:
-          return {"error": f"Tweet Worker Agents had an issue: {e}"}
+        with app.app_context():
+          try:
+            print("Inside post_tweet agent job will start")
+            # start agent work
+            set_key(".dynamic.env", "AGENT_WORK_DONE", "False")
+            load_dotenv('.dynamic.env', override=True)
+            agent_state.agent_work_done = False
+            # Run your agent tasks
+            # Start agents
+            agent_thread = threading.Thread(target=start_agents, args=(app,))
+            agent_thread.start()
+            agent_thread.join()
+            agent_state.agent_work_done = True
+          except Exception as e:
+            return {"error": f"Tweet Worker Agents had an issue: {e}"}
+        
       else:
         show_popup(popup_state, "You need a chat response to have something to tweet from.", "error")
+    
     else:
       show_popup(popup_state, "Tokens/Secrets Required! Please fill and save form before posting tweet.", "error")
 """
@@ -635,16 +665,23 @@ def page():
     # Agent job output popup
     # while os.getenv("POPUP_AGENT_VISIBLE") == "True":
     if popup_state.popup_agent_visible:
+      # start background process that is going to read the log file where agents are going to write their output thoughs and communication.
+      # we will capture it here in agent_state agent_messages and update the webui popup periodically
       with me.box(style=me.Style(position="fixed", bottom="10%", right="10%", padding=me.Padding.all(20), background="white", box_shadow="0 0 10px rgba(0,0,0,0.5)", z_index=1000, height="600px", overflow_y="scroll")):
         with me.box(style=me.Style(padding=me.Padding.all(2),display="flex", flex_direction="column", background="white", justify_content="start", align_content="center", align_items="center", flex_wrap="wrap")):
           me.text("Agents Output", type="headline-6")
-          agent_messages_list = update_agent_popup(popup_state, agent_state, os.getenv("AGENT_MESSAGES"))
-          print("agent_message_list value and type (from webui popup agent): ", agent_messages_list, type(agent_messages_list))
+          #agent_messages_list = update_agent_popup(popup_state, agent_state, os.getenv("AGENT_MESSAGES"))
+          #print("agent_message_list value and type (from webui popup agent): ", agent_messages_list, type(agent_messages_list))
+          for message in agent_state.agent_messages:
+             me.text(message)
           # Now you can loop through the list
-          for message in agent_messages_list:
-            print("message: ", message)
-            me.text(message)
+          #for message in agent_messages_list:
+            #print("message: ", message)
+            #me.text(message)
           time.sleep(2)
+          if os.getenv("AGENT_WORK_DONE") == "True":
+            me.button("Close", on_click=lambda e: close_agent_popup(popup_state, e))
+
 
           
           #if os.getenv("AGENT_MESSAGES"):
