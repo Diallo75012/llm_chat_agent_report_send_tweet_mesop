@@ -36,6 +36,9 @@ from subprocess import Popen
 import threading
 # logging
 import logging
+# watchdog that is going to check for the log file changes and append to state the content
+from watchdog.observers import Observer
+from watchdog.events import FileSystemEventHandler
 # this to avoid contet error
 from flask import current_app, Flask
 
@@ -152,51 +155,52 @@ chat_response_message = ""
 topic = ""
 env_file=".dynamic.env"
 stop_log_reader = False
-
+log_file = os.getenv("LOG_FILE")
 
 ############################################################
 ##### BUSINESS LOGIC HELPER FUNCTIONS
 # Append new messages to the AGENT_MESSAGES environment variable in the specified .env file.
-@observe()
-def append_to_agent_messages(env_path: str, new_messages: List[str]):
-    """
+
+#@observe()
+#def append_to_agent_messages(env_path: str, new_messages: List[str]):
+"""
     Append new messages to the AGENT_MESSAGES environment variable in the specified .env file.
 
     Args:
         env_path (str): The path to the .env file.
         new_messages (list): The new messages to append.
-    """
+"""
     # Load the current environment variables from the file
-    load_dotenv(env_path, override=True)
+#    load_dotenv(env_path, override=True)
     
     # Get the current value of AGENT_MESSAGES
-    current_messages = os.getenv('AGENT_MESSAGES', '[]')
+#    current_messages = os.getenv('AGENT_MESSAGES', '[]')
     
     # Convert the current value to a list
-    try:
-        current_messages_list = json.loads(current_messages)
-        if not isinstance(current_messages_list, list):
-            raise ValueError("AGENT_MESSAGES is not a list.")
-    except json.JSONDecodeError:
-        current_messages_list = []
+#    try:
+#        current_messages_list = json.loads(current_messages)
+#        if not isinstance(current_messages_list, list):
+#            raise ValueError("AGENT_MESSAGES is not a list.")
+#    except json.JSONDecodeError:
+#        current_messages_list = []
     
     # Append the new messages
-    current_messages_list.extend(new_messages)
+#    current_messages_list.extend(new_messages)
     
     # Convert the updated list back to a JSON string
-    updated_messages = json.dumps(current_messages_list)
+#    updated_messages = json.dumps(current_messages_list)
     
     # Update the environment variable in the .env file
-    set_key(env_path, 'AGENT_MESSAGES', updated_messages)
-    print("AGENT_MESSAGES updated successfully.")
+#    set_key(env_path, 'AGENT_MESSAGES', updated_messages)
+#    print("AGENT_MESSAGES updated successfully.")
     
     # Refresh the Mesop state
-    popup_state = me.state(PopupState)
-    agent_state = me.state(AgentState)
-    agent_state.agent_messages = current_messages_list
-    popup_state.popup_agent_visible = True
+#    popup_state = me.state(PopupState)
+#    agent_state = me.state(AgentState)
+#    agent_state.agent_messages = current_messages_list
+#    popup_state.popup_agent_visible = True
 
-    print("Popup state updated successfully.")
+#    print("Popup state updated successfully.")
 
 # Manage agents state as they are working in order to show their though in a popup
 @observe()
@@ -242,40 +246,40 @@ def close_popup(state, e: me.ClickEvent):
 
 #### BACKGROUND READ LOGS ######
 # start sub process to read log file written by agents and update AgentState agent_messages
-@observe()
-def read_log_file(app, log_file_path):
-  with app.app_context():
-    print("Inside read log file app context")
-    agent_state = me.state(AgentState)
-    time.sleep(2)
-    with open(log_file_path, "r", encoding="utf-8") as log_file:
-      while not stop_log_reader:
-        where = log_file.tell()
-        line = log_file.readline()
-        if not line:
-          time.sleep(0.1)  # Sleep briefly to avoid busy waiting
-          log_file.seek(where)  # Go back to the last read position
-        else:
-          # Update the Mesop state with the new log line
-          agent_state.agent_messages.append(line.strip())
-          # Process the log line
-          print(line.strip())
+#@observe()
+#def read_log_file(app, log_file_path):
+#  with app.app_context():
+#    print("Inside read log file app context")
+#    agent_state = me.state(AgentState)
+#    time.sleep(2)
+#    with open(log_file_path, "r", encoding="utf-8") as log_file:
+#      while not stop_log_reader:
+#        where = log_file.tell()
+#        line = log_file.readline()
+#        if not line:
+#          time.sleep(0.1)  # Sleep briefly to avoid busy waiting
+#          log_file.seek(where)  # Go back to the last read position
+#        else:
+#          # Update the Mesop state with the new log line
+#          agent_state.agent_messages.append(line.strip())
+#          # Process the log line
+#          print(line.strip())
 
-@observe()
-def start_background_log_reader(app, log_file_path):
-  print("inside start background log reader")
-  global stop_log_reader
-  stop_log_reader = False
-  if log_file_path is None:
-    raise ValueError("LOG_FILE path is not set. Please check your environment variables.")
-  log_reader_thread = threading.Thread(target=read_log_file, args=(app, log_file_path))
-  log_reader_thread.start()
-  return log_reader_thread
+#@observe()
+#def start_background_log_reader(app, log_file_path):
+#  print("inside start background log reader")
+#  global stop_log_reader
+#  stop_log_reader = False
+#  if log_file_path is None:
+#    raise ValueError("LOG_FILE path is not set. Please check your environment variables.")
+#  log_reader_thread = threading.Thread(target=read_log_file, args=(app, log_file_path))
+#  log_reader_thread.start()
+#  return log_reader_thread
 
-@observe()
-def stop_background_log_reader():
-  global stop_log_reader
-  stop_log_reader = True
+#@observe()
+#def stop_background_log_reader():
+#  global stop_log_reader
+#  stop_log_reader = True
 
 #### BACKGROUND RUN AGENTS ######
 @observe()
@@ -290,6 +294,34 @@ def run_agent_process(command):
   #agent_process.wait()
   return agent_process
 
+#### WATCHDOG PROCESS CHECKING LOG FILE FOR AGENT NEW OUTPUT TO UPDATE STATE
+class LogFileHandler(FileSystemEventHandler):
+    def __init__(self, log_file):
+        self.log_file = log_file
+        self.last_position = 0
+        self.agent_state = me.state(AgentState)
+
+    def on_modified(self, event):
+        if event.src_path == self.log_file:
+            with open(self.log_file, "r", encoding="utf-8") as f:
+                f.seek(self.last_position)
+                new_lines = f.readlines()
+                self.last_position = f.tell()
+
+                for line in new_lines:
+                    line = line.strip()
+                    if line:
+                        self.agent_state.agent_messages.append(line)
+                        print("agent state messages updated with :", line)  # for debugging
+                        print("Agent state messages is now: ", self.agent_state.agent_messages)
+
+def start_log_observer(log_file):
+    event_handler = LogFileHandler(log_file)
+    observer = Observer()
+    observer.schedule(event_handler, path=os.path.dirname(log_file), recursive=False)
+    observer.start()
+    return observer
+
 #### START BACKGROUND PROCESSES LOG READ AND AGENT JOB ######
 @observe()
 def start_agents(app):
@@ -298,28 +330,28 @@ def start_agents(app):
     popup_state = me.state(PopupState)
     agent_state = me.state(AgentState)
     popup_state.popup_agent_visible = True
-    command = "source /home/creditizens/mesop/agents_venv/bin/activate && /home/creditizens/mesop/agents_venv/bin/python3 /home/creditizens/mesop/agents.py"
+    if popup_state.popup_agent_visible:
+      command = "source /home/creditizens/mesop/agents_venv/bin/activate && /home/creditizens/mesop/agents_venv/bin/python3 /home/creditizens/mesop/agents.py"
+
+      log_file = os.getenv("LOG_FILE")
+      observer = start_log_observer(log_file)
+
+      # Start agent process in a separate thread
+      agent_thread = threading.Thread(target=run_agent_process, args=(command,))
+      print("Inside app context start_agent: agent_thread start line")
+      agent_thread.start()
+
+      # Wait for the agent process to complete
+      agent_thread.join()
+
+      # Stop log reading
+      observer.stop()
+      observer.join()
         
-    # Start log reader thread
-    log_file = os.getenv("LOG_FILE")
-    log_thread = start_background_log_reader(app, log_file)
-
-    # Start agent process in a separate thread
-    agent_thread = threading.Thread(target=run_agent_process, args=(command,))
-    print("Inside app context start_agent: agent_thread start line")
-    agent_thread.start()
-
-    # Wait for the agent process to complete
-    agent_thread.join()
-
-    # Stop log reader thread
-    stop_background_log_reader()
-    log_thread.join()
-        
-    set_key('.dynamic.env', 'AGENT_WORK_DONE', 'True')
-    load_dotenv('.dynamic.env', override=True)
-    agent_state.agent_work_done = True
-    print("Inside start_agents function: all states updated again even if already done in post tweet before, therefore, env vars and state updated: popup_agent_visible=True , agent_work_done=True")
+      set_key('.dynamic.env', 'AGENT_WORK_DONE', 'True')
+      load_dotenv('.dynamic.env', override=True)
+      agent_state.agent_work_done = True
+      print("Inside start_agents function: all states updated again even if already done in post tweet before, therefore, env vars and state updated: popup_agent_visible=True , agent_work_done=True")
 
 
 # post tweet

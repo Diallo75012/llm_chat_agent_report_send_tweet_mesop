@@ -18,6 +18,7 @@ from openai import OpenAI
 from langchain.pydantic_v1 import BaseModel, Field
 from langchain.tools import StructuredTool
 from langchain_community.tools import DuckDuckGoSearchRun
+from langchain_core.callbacks import BaseCallbackHandler
 # CREWAI AGENTS
 from crewai import Agent
 from crewai import Task
@@ -26,6 +27,11 @@ from crewai import Crew, Process
 # for cqpture stdout
 #from io import StringIO
 import logging
+# import subprocess
+import threading
+import multiprocessing
+from subprocess import Popen
+from logger import log_listener 
 
 
 # env vars
@@ -51,6 +57,67 @@ chat_response_message = ""
 topic = ""
 TWEET_FILE = ""
 
+### CALLBACK HANDLER
+#log_file = os.getenv("LOG_FILE")
+#print(log_file)
+#logging.basicConfig(filename=log_file, level=logging.INFO, format='%(asctime)s:%(message)s')
+
+# Configure multiprocessing queue for logging
+#log_queue = multiprocessing.Queue()
+#log_file = os.getenv("LOG_FILE")
+
+#def start_log_listener(queue, log_file_path):
+#    log_process = multiprocessing.Process(target=log_listener, args=(queue, log_file))
+#    log_process.start()
+#    return log_process
+
+class CustomLogCallbackHandler(BaseCallbackHandler):
+    #def __init__(self, log_queue):
+        #self.log_queue = log_queue
+
+    def on_agent_step(self, step_output):
+        print("Callback step_output: ", step_output)
+        for step in step_output:
+            print("Callback step: ", step)
+            if isinstance(step, tuple) and len(step) == 2:
+                action, observation = step
+                print("Callback action: ", action)
+                print("Callback observation: ", observation)
+                if isinstance(action, dict) and "tool" in action and "tool_input" in action and "log" in action:
+                    action_message = (
+                        f"Action:\n"
+                        f"Tool: {action['tool']}\n"
+                        f"Tool Input: {action['tool_input']}\n"
+                        f"Log: {action['log']}\n"
+                        f"Action: {action.get('Action', '')}\n"
+                        f"Action Input: {action['tool_input']}\n"
+                        f"Observation:\n"
+                    )
+
+                    observation_lines = observation.split('\n')
+                    for line in observation_lines:
+                        if line.startswith('Title: '):
+                            message += f"Title: {line[7:]}\n"
+                        elif line.startswith('Link: '):
+                            message += f"Link: {line[6:]}\n"
+                        elif line.startswith('Snippet: '):
+                            message += f"Snippet: {line[9:]}\n"
+                        elif line.startswith('-'):
+                            message += f"{line}\n"
+                        else:
+                            message += f"{line}\n"
+
+                else:
+                    message = f"Action: {str(action)}\nObservation: {str(observation)}\n"
+            with open("/home/creditizens/mesop/logs/agent_output.log", "w", encoding="utf-8") as f:
+              f.write(message)
+            #self.log_queue.put(message)
+
+
+
+# Create an instance of the custom callback handler
+custom_callback_handler = CustomLogCallbackHandler()
+
 #### LLMS VARS
 # OLLAMA LLM
 ollama_llm = Ollama(model="mistral:7b")
@@ -60,16 +127,16 @@ LM_OPENAI_MODEL_NAME = os.getenv("LM_OPENAI_MODEL_NAME")
 LM_VISION_MODEL_NAME = os.getenv("LM_VISION_MODEL_NAME")
 LM_OPENAI_API_KEY = os.getenv("LM_OPENAI_API_KEY")
 lmstudio_llm = OpenAI(base_url=LM_OPENAI_API_BASE, api_key=LM_OPENAI_API_KEY)
-lmstudio_llm_for_agent = ChatOpenAI(openai_api_base=LM_OPENAI_API_BASE, openai_api_key=LM_OPENAI_API_KEY, model_name="NA", temperature=float(os.getenv("GROQ_TEMPERATURE")))
+lmstudio_llm_for_agent = ChatOpenAI(openai_api_base=LM_OPENAI_API_BASE, openai_api_key=LM_OPENAI_API_KEY, model_name="NA", temperature=float(os.getenv("GROQ_TEMPERATURE")), callbacks=[custom_callback_handler])
 openai_llm = ChatOpenAI() #OpenAI()
 # GROQ LLM
 GROQ_API_KEY=os.getenv("GROQ_API_KEY")
 groq_client=Groq()
 groq_llm_mixtral_7b = ChatGroq(temperature=float(os.getenv("GROQ_TEMPERATURE")), groq_api_key=os.getenv("GROQ_API_KEY"), model_name=os.getenv("MODEL_MIXTRAL_7B"),
-max_tokens=int(os.getenv("GROQ_MAX_TOKEN")))
-groq_llm_llama3_8b = ChatGroq(temperature=float(os.getenv("GROQ_TEMPERATURE")), groq_api_key=os.getenv("GROQ_API_KEY"), model_name=os.getenv("MODEL_LLAMA3_8B"), max_tokens=int(os.getenv("GROQ_MAX_TOKEN")))
-groq_llm_llama3_70b = ChatGroq(temperature=float(os.getenv("GROQ_TEMPERATURE")), groq_api_key=os.getenv("GROQ_API_KEY"), model_name=os.getenv("MODEL_LLAMA3_70B"), max_tokens=int(os.getenv("GROQ_MAX_TOKEN")))
-groq_llm_gemma_7b = ChatGroq(temperature=float(os.getenv("GROQ_TEMPERATURE")), groq_api_key=os.getenv("GROQ_API_KEY"), model_name=os.getenv("MODEL_GEMMA_7B"), max_tokens=int(os.getenv("GROQ_MAX_TOKEN")))
+max_tokens=int(os.getenv("GROQ_MAX_TOKEN")), callbacks=[custom_callback_handler])
+groq_llm_llama3_8b = ChatGroq(temperature=float(os.getenv("GROQ_TEMPERATURE")), groq_api_key=os.getenv("GROQ_API_KEY"), model_name=os.getenv("MODEL_LLAMA3_8B"), max_tokens=int(os.getenv("GROQ_MAX_TOKEN")), callbacks=[custom_callback_handler])
+groq_llm_llama3_70b = ChatGroq(temperature=float(os.getenv("GROQ_TEMPERATURE")), groq_api_key=os.getenv("GROQ_API_KEY"), model_name=os.getenv("MODEL_LLAMA3_70B"), max_tokens=int(os.getenv("GROQ_MAX_TOKEN")), callbacks=[custom_callback_handler])
+groq_llm_gemma_7b = ChatGroq(temperature=float(os.getenv("GROQ_TEMPERATURE")), groq_api_key=os.getenv("GROQ_API_KEY"), model_name=os.getenv("MODEL_GEMMA_7B"), max_tokens=int(os.getenv("GROQ_MAX_TOKEN")), callbacks=[custom_callback_handler])
 
 #### LANGFUSE VARS
 # langfuse init
@@ -85,22 +152,6 @@ langfuse_handler = CallbackHandler(
 )
 
 ### AGENTS HELPTER FUNCTIONS
-
-# Configure logging
-log_file_path = os.getenv("LOG_FILE")
-logging.basicConfig(filename=log_file_path, level=logging.INFO, format='%(asctime)s:%(message)s')
-
-# callback functions
-def agent_step_callback(Agent): #step, state
-    #message = f"Agent {Agent.role} at step {Step}: {State}"
-    message = str(Agent)
-    logging.info(message)
-def task_callback(Task): # Result
-    #message = f"Task {Task.description} completed with result: {Result}"
-    message = str(Task)
-    logging.info(message)
-def capture_output_callback(Agent, Message):
-    logging.info(f"Agent {Agent.role} output: {Message}")
 
 # llm chat call function
 @observe(as_type="generation")
@@ -252,8 +303,7 @@ tweet_creator = Agent(
   llm=groq_llm_mixtral_7b,
   max_rpm=3,
   max_iter=4,
-  # callback=capture_output_callback,
-  step_callback=agent_step_callback,
+  step_callback=custom_callback_handler.on_agent_step,
 )
 
 tweet_checker = Agent(
@@ -267,8 +317,7 @@ tweet_checker = Agent(
   llm=groq_llm_llama3_70b,
   max_rpm=3,
   max_iter=4,
-  # callback=capture_output_callback,
-  step_callback=agent_step_callback,
+  step_callback=custom_callback_handler.on_agent_step,
 )
 
 # REPORT AGENTS
@@ -283,8 +332,7 @@ fact_checker = Agent(
   llm=groq_llm_llama3_70b,
   max_rpm=3,
   max_iter=4,
-  # callback=capture_output_callback,
-  step_callback=agent_step_callback,
+  step_callback=custom_callback_handler.on_agent_step,
 )
 
 report_outline_creator = Agent(
@@ -298,8 +346,7 @@ report_outline_creator = Agent(
   llm=groq_llm_gemma_7b,
   max_rpm=3,
   max_iter=4,
-  # callback=capture_output_callback,
-  step_callback=agent_step_callback,
+  step_callback=custom_callback_handler.on_agent_step,
 )
 
 report_creator = Agent(
@@ -312,8 +359,7 @@ report_creator = Agent(
   llm=groq_llm_mixtral_7b,
   max_rpm=3,
   max_iter=4,
-  # callback=capture_output_callback,
-  step_callback=agent_step_callback,
+  step_callback=custom_callback_handler.on_agent_step,
 )
 
 ### AGENTS TASKS DEFINITION
@@ -325,7 +371,7 @@ tweet_creation_task = Task(
   agent=tweet_creator,
   async_execution=False,
   output_file="./tweets/agent_tweet_creation_report.md",
-  callback=task_callback,
+  callback=custom_callback_handler.on_agent_step,
 )
 
 tweet_check_task = Task(
@@ -335,7 +381,7 @@ tweet_check_task = Task(
   agent=tweet_checker,
   async_execution=False,
   output_file="./tweets/agent_tweet_length_adjusted.txt",
-  callback=task_callback,
+  callback=custom_callback_handler.on_agent_step,
 )
 
 # REPORT TASKS
@@ -346,7 +392,7 @@ fact_check_task = Task(
   agent=tweet_checker,
   async_execution=False,
   output_file="./reports/agent_fact_check_report.md",
-  callback=task_callback,
+  callback=custom_callback_handler.on_agent_step,
 )
 
 report_outline_creation_task = Task(
@@ -356,7 +402,7 @@ report_outline_creation_task = Task(
   agent=tweet_checker,
   async_execution=False,
   output_file="./reports/agent_outline_of_report.md",
-  callback=task_callback,
+  callback=custom_callback_handler.on_agent_step,
 )
 
 report_creation_task = Task(
@@ -366,7 +412,7 @@ report_creation_task = Task(
   agent=tweet_checker,
   async_execution=False,
   output_file="./reports/agent_outline_of_report.md",
-  callback=task_callback,
+  callback=custom_callback_handler.on_agent_step,
 )
 
 ##### AGENT TEAMS
@@ -376,7 +422,6 @@ tweet_agent_team = Crew(
   tasks=[tweet_creation_task, tweet_check_task],
   process=Process.sequential,
   verbose=2,
-    callback=capture_output_callback,
 )
 ## PROCESS SEQUENTIAL
 report_agent_team = Crew(
@@ -384,7 +429,6 @@ report_agent_team = Crew(
   tasks=[fact_check_task, report_outline_creation_task, report_creation_task],
   process=Process.sequential,
   verbose=2,
-  callback=capture_output_callback,
 )
 
 @observe()
@@ -401,16 +445,20 @@ def agent_team_job():
 
 # change this to update the env var and start the agent team with the right inputs
 if __name__ == '__main__':
+  #log_process = start_log_listener(log_queue, log_file)
+  #try:
   load_dotenv('.dynamic.env', override=True)
   print("Inside agents.py will start now agent_team_job()")
+  # start agent job
   agent_team_job()
   
   # Indicate agent work is done for the capture output to detect it and stop its while loop then mesop will continue the rest of the functions app
   set_key('.dynamic.env', "AGENT_WORK_DONE", "True")
   load_dotenv('.dynamic.env', override=True)
-  # this is handled in the mesop app part
-  # set_key(env_file, "AGENT_WORK_DONE", "False")
-  # set_key(env_file, "POPUP_AGENT_VISIBLE", "True")
+  #finally:
+    # stop the logging process
+    #log_queue.put("STOP")
+    #log_process.join()
   
 
 
