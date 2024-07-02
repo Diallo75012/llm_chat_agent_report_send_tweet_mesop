@@ -58,61 +58,44 @@ topic = ""
 TWEET_FILE = ""
 
 ### CALLBACK HANDLER
-#log_file = os.getenv("LOG_FILE")
-#print(log_file)
-#logging.basicConfig(filename=log_file, level=logging.INFO, format='%(asctime)s:%(message)s')
-
-# Configure multiprocessing queue for logging
-#log_queue = multiprocessing.Queue()
-#log_file = os.getenv("LOG_FILE")
-
-#def start_log_listener(queue, log_file_path):
-#    log_process = multiprocessing.Process(target=log_listener, args=(queue, log_file))
-#    log_process.start()
-#    return log_process
-
 class CustomLogCallbackHandler(BaseCallbackHandler):
-    #def __init__(self, log_queue):
-        #self.log_queue = log_queue
 
-    def on_agent_step(self, step_output):
-        print("Callback step_output: ", step_output)
-        for step in step_output:
-            print("Callback step: ", step)
-            if isinstance(step, tuple) and len(step) == 2:
-                action, observation = step
-                print("Callback action: ", action)
-                print("Callback observation: ", observation)
-                if isinstance(action, dict) and "tool" in action and "tool_input" in action and "log" in action:
-                    action_message = (
-                        f"Action:\n"
-                        f"Tool: {action['tool']}\n"
-                        f"Tool Input: {action['tool_input']}\n"
-                        f"Log: {action['log']}\n"
-                        f"Action: {action.get('Action', '')}\n"
-                        f"Action Input: {action['tool_input']}\n"
-                        f"Observation:\n"
-                    )
+  def on_agent_step(self, step_output):
+    # print("Callback step_output: ", step_output)
+    for step in step_output:
+      # print("Callback step: ", step)
+      if isinstance(step, tuple) and len(step) == 2:
+        action, observation = step
+        # print("Callback action: ", action)
+        # print("Callback observation: ", observation)
+        if isinstance(action, dict) and "tool" in action and "tool_input" in action and "log" in action:
+          action_message = (
+            f"Action:\n"
+            f"Tool: {action['tool']}\n"
+            f"Tool Input: {action['tool_input']}\n"
+            f"Log: {action['log']}\n"
+            f"Action: {action.get('Action', '')}\n"
+            f"Action Input: {action['tool_input']}\n"
+            f"Observation:\n"
+          )
 
-                    observation_lines = observation.split('\n')
-                    for line in observation_lines:
-                        if line.startswith('Title: '):
-                            message += f"Title: {line[7:]}\n"
-                        elif line.startswith('Link: '):
-                            message += f"Link: {line[6:]}\n"
-                        elif line.startswith('Snippet: '):
-                            message += f"Snippet: {line[9:]}\n"
-                        elif line.startswith('-'):
-                            message += f"{line}\n"
-                        else:
-                            message += f"{line}\n"
+          observation_lines = observation.split('\n')
+          for line in observation_lines:
+            if line.startswith('Title: '):
+              message += f"Title: {line[7:]}\n"
+            elif line.startswith('Link: '):
+              message += f"Link: {line[6:]}\n"
+            elif line.startswith('Snippet: '):
+              message += f"Snippet: {line[9:]}\n"
+            elif line.startswith('-'):
+              message += f"{line}\n"
+            else:
+              message += f"{line}\n"
 
-                else:
-                    message = f"Action: {str(action)}\nObservation: {str(observation)}\n"
-            with open("/home/creditizens/mesop/logs/agent_output.log", "w", encoding="utf-8") as f:
-              f.write(message)
-            #self.log_queue.put(message)
-
+        else:
+          message = f"Action: {str(action)}\nObservation: {str(observation)}\n"
+    with open("/home/creditizens/mesop/logs/agent_output.log", "a", encoding="utf-8") as f:
+      f.write(message)
 
 
 # Create an instance of the custom callback handler

@@ -204,7 +204,7 @@ log_file = os.getenv("LOG_FILE")
 
 # Manage agents state as they are working in order to show their though in a popup
 @observe()
-def show_agent_popup(state):
+def show_agent_popup(state, e: me.ClickEvent):
   print("Inside show popup agent")
   state.popup_agent_visible = True
   # set the popup_agent_visible shared state env varsto true
@@ -295,32 +295,38 @@ def run_agent_process(command):
   return agent_process
 
 #### WATCHDOG PROCESS CHECKING LOG FILE FOR AGENT NEW OUTPUT TO UPDATE STATE
+@observe()
 class LogFileHandler(FileSystemEventHandler):
-    def __init__(self, log_file):
-        self.log_file = log_file
-        self.last_position = 0
-        self.agent_state = me.state(AgentState)
+  def __init__(self, log_file):
+    self.log_file = log_file
+    self.last_position = 0
+    self.agent_state = me.state(AgentState)
 
-    def on_modified(self, event):
-        if event.src_path == self.log_file:
-            with open(self.log_file, "r", encoding="utf-8") as f:
-                f.seek(self.last_position)
-                new_lines = f.readlines()
-                self.last_position = f.tell()
+  def on_modified(self, event):
+    if event.src_path == self.log_file:
+      with open(self.log_file, "r", encoding="utf-8") as f:
+        f.seek(self.last_position)
+        new_lines = f.readlines()
+        self.last_position = f.tell()
 
-                for line in new_lines:
-                    line = line.strip()
-                    if line:
-                        self.agent_state.agent_messages.append(line)
-                        print("agent state messages updated with :", line)  # for debugging
-                        print("Agent state messages is now: ", self.agent_state.agent_messages)
+        for line in new_lines:
+          line = line.strip()
+          if line:
+            self.agent_state.agent_messages.append(line)
+            print("agent state messages updated with :", line)  # for debugging
+            print("Agent state messages is now: ", self.agent_state.agent_messages)
 
+@observe()
 def start_log_observer(log_file):
-    event_handler = LogFileHandler(log_file)
-    observer = Observer()
-    observer.schedule(event_handler, path=os.path.dirname(log_file), recursive=False)
-    observer.start()
-    return observer
+  event_handler = LogFileHandler(log_file)
+  observer = Observer()
+  observer.schedule(event_handler, path=os.path.dirname(log_file), recursive=False)
+  observer.start()
+  return observer
+
+def output_agent_though():
+  for message in popup_state.agent_messages:
+    yield message
 
 #### START BACKGROUND PROCESSES LOG READ AND AGENT JOB ######
 @observe()
@@ -365,13 +371,14 @@ def post_tweet(e: me.ClickEvent, app=app):
     popup_state = me.state(PopupState)
     agent_state = me.state(AgentState)
     from_state = me.state(FormState)
+    """
     try:
       show_agent_popup(popup_state)
       popup_state.popup_agent_visible = True
       print("*************************  ", popup_state.popup_agent_visible, "  ******************************")
-      time.sleep(4)
     except Exception as e:
       return f"An error occured while trying to show popup agent: {e}"
+    """
     ## Set env vars for agent input
     print("Tweet State Raw: ", tweet_state, type(tweet_state))
     tweet_state_json_str = json.dumps(tweet_state.__dict__)
@@ -380,6 +387,7 @@ def post_tweet(e: me.ClickEvent, app=app):
       "CHAT_RESPONSE_MESSAGE": tweet_state.tweet_chat_message,
       "TWEET_STATE": tweet_state_json_str
     }
+    print("Agent Input Vars Dynamic", agent_input_vars_dynamic)
     create_dynamic_env(".dynamic.env", agent_input_vars_dynamic)
     
     # flag here for the agents that it is the tweet agents that are going to work and not the report ones. we need to use shared env vars.
@@ -411,6 +419,7 @@ def post_tweet(e: me.ClickEvent, app=app):
     
     else:
       show_popup(popup_state, "Tokens/Secrets Required! Please fill and save form before posting tweet.", "error")
+
 """
     # tweeter authentication
     auth = tweepy.OAuth1UserHandler(
@@ -646,7 +655,7 @@ def page():
         me.button("Internet Search Report")
       with me.box(style=me.Style(display="flex", flex_direction="column", justify_content="start", align_content="center", align_items="center")):
         me.text("Social Media Post", type="headline-6")
-        me.button("Post to Tweeter", on_click=post_tweet) # post_tweet function to create and also create a state variable to save last chat answer so that it can be used
+        me.button("Post to Tweeter", on_click=lambda e: show_agent_popup(popup_state, e)) # post_tweet function to create and also create a state variable to save last chat answer so that it can be used
       with me.box(style=me.Style(padding=me.Padding.all(10),display="flex", flex_direction="column", background="white", justify_content="start", align_content="center", align_items="center", flex_wrap="wrap")):
         me.text("Set Key and Tokens", type="headline-6"),
         me.text("All fields are required: (Tip) delete all fields and save again if you haven't provided all fields but saved.", type="body-2", style=me.Style(color="blue")),
@@ -697,32 +706,47 @@ def page():
     # Agent job output popup
     # while os.getenv("POPUP_AGENT_VISIBLE") == "True":
     if popup_state.popup_agent_visible:
+      load_dotenv(dotenv_path='.dynamic.env', override=True)
       # start background process that is going to read the log file where agents are going to write their output thoughs and communication.
       # we will capture it here in agent_state agent_messages and update the webui popup periodically
       with me.box(style=me.Style(position="fixed", bottom="10%", right="10%", padding=me.Padding.all(20), background="white", box_shadow="0 0 10px rgba(0,0,0,0.5)", z_index=1000, height="600px", overflow_y="scroll")):
         with me.box(style=me.Style(padding=me.Padding.all(2),display="flex", flex_direction="column", background="white", justify_content="start", align_content="center", align_items="center", flex_wrap="wrap")):
-          me.text("Agents Output", type="headline-6")
-          #agent_messages_list = update_agent_popup(popup_state, agent_state, os.getenv("AGENT_MESSAGES"))
-          #print("agent_message_list value and type (from webui popup agent): ", agent_messages_list, type(agent_messages_list))
-          for message in agent_state.agent_messages:
-             me.text(message)
-          # Now you can loop through the list
-          #for message in agent_messages_list:
-            #print("message: ", message)
-            #me.text(message)
-          time.sleep(2)
+        
+          # Title of popup
+          me.text("Agents Tweeter Team Job", type="headline-6")
+          me.button("Start Agent Job", on_click=post_tweet)
+          mel.text_to_text( output_agent_though, title="Creditizens Tweeter Agent:",)
+          """
+          # display messages with colors depending on type of log   
+          for message in agent_state.agent_messages[:]:
+            # display the message with different styling colors
+            if message.lower().startswith("action"):
+              with me.box(style=me.Style(padding=me.Padding.all(0.5),display="flex", flex_direction="column", background="white", justify_content="start", align_content="center", align_items="center", flex_wrap="wrap", color="#6a03a6",)):
+                me.text(message)
+            elif message.lower().startswith("tool"):
+              with me.box(style=me.Style(padding=me.Padding.all(0.5),display="flex", flex_direction="column", background="white", justify_content="start", align_content="center", align_items="center", flex_wrap="wrap", color="#ff6600",)):
+                me.text(message)
+            elif message.lower().startswith("log"):
+              with me.box(style=me.Style(padding=me.Padding.all(0.5),display="flex", flex_direction="column", background="white", justify_content="start", align_content="center", align_items="center", flex_wrap="wrap", color="#888f88",)):
+                me.text(message)
+            elif message.lower().startswith("action input"):
+              with me.box(style=me.Style(padding=me.Padding.all(0.5),display="flex", flex_direction="column", background="white", justify_content="start", align_content="center", align_items="center", flex_wrap="wrap", color="#089403",)):
+                me.text(message)
+            elif message.lower().startswith("observation"):
+              with me.box(style=me.Style(padding=me.Padding.all(0.5),display="flex", flex_direction="column", background="white", justify_content="start", align_content="center", align_items="center", flex_wrap="wrap", color="#0b27db",)):
+                me.text(message)
+            else:
+              with me.box(style=me.Style(padding=me.Padding.all(0.5),display="flex", flex_direction="column", background="white", justify_content="start", align_content="center", align_items="center", flex_wrap="wrap", color="black",)):
+                me.text(message)
+            # remove the message from the state
+            agent_state.agent_message.remove(message)
+            # reload the env var file in order to get its update values to get agent_work_done
+            load_dotenv(dotenv_path='.dynamic.env', override=True)
+          """
+          # show button to close the popup when agent work is done only
           if os.getenv("AGENT_WORK_DONE") == "True":
             me.button("Close", on_click=lambda e: close_agent_popup(popup_state, e))
 
-
-          
-          #if os.getenv("AGENT_MESSAGES"):
-           # load_dotenv(dotenv_path='.dynamic.env', override=True)
-            #for message in json.loads(os.getenv("AGENT_MESSAGES")):
-             # me.text(message)
-        #if os.getenv("AGENT_WORK_DONE") == "True":
-        #if popup_state.agent_work_done:  # Show button only when done
-          #me.button("Close", on_click=lambda e: close_agent_popup(popup_state, e))
 
 
 @observe(as_type="observation")
