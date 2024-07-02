@@ -301,8 +301,10 @@ class LogFileHandler(FileSystemEventHandler):
     self.log_file = log_file
     self.last_position = 0
     self.agent_state = me.state(AgentState)
+    self.agent_messages_env = json.loads(os.getenv("AGENT_MESSAGES"))
 
   def on_modified(self, event):
+    
     if event.src_path == self.log_file:
       with open(self.log_file, "r", encoding="utf-8") as f:
         f.seek(self.last_position)
@@ -310,11 +312,14 @@ class LogFileHandler(FileSystemEventHandler):
         self.last_position = f.tell()
 
         for line in new_lines:
-          line = line.strip()
+          line = line.strip().replace("\\", " ")
           if line:
             self.agent_state.agent_messages.append(line)
-            print("agent state messages updated with :", line)  # for debugging
+            self.agent_messages_env.append(line)
             print("Agent state messages is now: ", self.agent_state.agent_messages)
+        set_key(".dynamic.env", "AGENT_MESSAGES", json.dumps(self.agent_messages_env))
+        load_dotenv(dotenv_path='.dynamic.env', override=True)
+        
 
 @observe()
 def start_log_observer(log_file):
@@ -326,7 +331,7 @@ def start_log_observer(log_file):
 
 def output_agent_though():
   for message in popup_state.agent_messages:
-    yield message
+    yield str(message)
 
 #### START BACKGROUND PROCESSES LOG READ AND AGENT JOB ######
 @observe()
@@ -394,7 +399,7 @@ def post_tweet(e: me.ClickEvent, app=app):
     set_key(env_file, "TWEET_AGENTS", "True")
     load_dotenv('.dynamic.env', override=True)
     print(f"Check if TWEET_AGENTS env var updated to 'True': {os.getenv('TWEET_AGENTS')}")
-    
+
     # start tweet agent workers. They will update the state tweet_message which is the final tweet posted catched later on, on this function
     if from_state.consumer_key and from_state.consumer_secret and from_state.access_token and from_state.access_token_secret:
       if tweet_state.tweet_chat_message:
@@ -714,8 +719,26 @@ def page():
         
           # Title of popup
           me.text("Agents Tweeter Team Job", type="headline-6")
-          me.button("Start Agent Job", on_click=post_tweet)
-          mel.text_to_text( output_agent_though, title="Creditizens Tweeter Agent:",)
+          start_agent_tweet = me.button("Start Agent Job", on_click=post_tweet)
+          
+          if start_agent_tweet:
+            for message in agent_state.agent_messages:
+              me.text(message)												 
+           
+            #while os.getenv("AGENT_MESSAGES"):
+              #try:
+                #load_dotenv(dotenv_path='.dynamic.env', override=True)
+                #agent_messages_json = os.getenv("AGENT_MESSAGES")
+                #agent_messages = json.loads(agent_messages_json)
+                #for message in json.loads(os.getenv("AGENT_MESSAGES")):
+                  #for message in agent_state.agent_messages:
+                  #me.text(message)
+              #except json.JSONDecodeError as e:
+                #print(f"Error parsing AGENT_MESSAGES: {e}")
+                #agent_messages = []
+
+          #for message in agent_state.agent_messages[:]:
+            #me.text(message)
           """
           # display messages with colors depending on type of log   
           for message in agent_state.agent_messages[:]:
@@ -768,5 +791,15 @@ LINES = [
   "Buberry shop in Ginza is where you will find the bests sells people of Japan!.",
 ]
 
-
+if __name__ == "__main__":
+    page()
+    # run in the background for periodic embeddings
+    if popup_state.popup_agent_visible:
+      log_file = os.getenv("LOG_FILE")
+      observer = start_log_observer(log_file)
+      reading_log_file_thread = threading.Thread(target=reading_log_file_periodically, daemon=True)
+      reading_log_file_thread.start()
+    else:
+      observer.stop()
+      observer.join()
 

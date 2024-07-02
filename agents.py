@@ -70,30 +70,31 @@ class CustomLogCallbackHandler(BaseCallbackHandler):
         # print("Callback observation: ", observation)
         if isinstance(action, dict) and "tool" in action and "tool_input" in action and "log" in action:
           action_message = (
-            f"Action:\n"
-            f"Tool: {action['tool']}\n"
-            f"Tool Input: {action['tool_input']}\n"
-            f"Log: {action['log']}\n"
-            f"Action: {action.get('Action', '')}\n"
-            f"Action Input: {action['tool_input']}\n"
-            f"Observation:\n"
+            f"""Action:
+            Tool: {action['tool']}
+            Tool Input: {action['tool_input']}
+            Log: {action['log']}
+            Action: {action.get('Action', '')}
+            Action Input: {action['tool_input']}
+            Observation:
+            """
           )
 
           observation_lines = observation.split('\n')
           for line in observation_lines:
             if line.startswith('Title: '):
-              message += f"Title: {line[7:]}\n"
+              message += f"Title: {line[7:]}"
             elif line.startswith('Link: '):
-              message += f"Link: {line[6:]}\n"
+              message += f"Link: {line[6:]}"
             elif line.startswith('Snippet: '):
-              message += f"Snippet: {line[9:]}\n"
+              message += f"Snippet: {line[9:]}"
             elif line.startswith('-'):
-              message += f"{line}\n"
+              message += f"{line}"
             else:
-              message += f"{line}\n"
+              message += f"{line}"
 
         else:
-          message = f"Action: {str(action)}\nObservation: {str(observation)}\n"
+          message = f"Action: {str(action)} - nObservation: {str(observation)}"
     with open("/home/creditizens/mesop/logs/agent_output.log", "a", encoding="utf-8") as f:
       f.write(message)
 

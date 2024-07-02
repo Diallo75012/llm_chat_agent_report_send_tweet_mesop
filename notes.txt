@@ -178,6 +178,8 @@ def update_current_observation(
 - had issue with getting agent output on the webui
 - got rid of all the threading subprocess and adjacent files and just used normal python write to file. used only one subprocess thread to start agents. Then use a watchdog to monitor that file and save the lines to the agent message state of mesop. Then on the webui, use a loop to get those message from the list mesop state of agent messages. delete those message from the state as they are printed to the webui. Need to put it in a while loop that will monitor the env var agent_work_done to stop the loop. Will use also me.box mesop styling with if condition to output different colors of tet depending on the type of agent output (task, action, observation... etc...)
 
+# show agents thoughs on webui example from streamlit:
+https://www.youtube.com/watch?v=nKG_kbQUDDE
 
 
 
